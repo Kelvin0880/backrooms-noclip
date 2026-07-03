@@ -284,7 +284,7 @@
       ctx.strokeRect(x + 10.5, y + 8.5, 27, 33);
     } else if (style === 'ventana') {
       // ventana luminosa en pie (o sobre la pared norte)
-      const by = northWall ? y - TILE + Tiles.B1 - 2 : y + 4;
+      const by = northWall ? y - 34 : y + 4;
       ctx.shadowColor = col; ctx.shadowBlur = 14 * pulse;
       ctx.fillStyle = '#2a2a2e';
       ctx.fillRect(cx - 11, by, 22, 30);
@@ -300,8 +300,8 @@
     } else {
       // puerta: pegada a la cara de la pared norte si existe; si no, exenta
       if (northWall) {
-        const by = y - TILE + Tiles.B1 - 1;        // arranque de la cara norte
-        const bh = Tiles.FH + 8;
+        const by = y - 37;                         // encajada en la cara del muro norte
+        const bh = 39;
         ctx.fillStyle = Tiles.shade(col, 0.28);    // marco
         ctx.fillRect(cx - 12, by, 24, bh);
         ctx.fillStyle = Tiles.shade(col, 0.5);     // hoja
@@ -553,35 +553,30 @@
           }
 
         if (g.t[idx] === T.PARED) {
-          // parallax de perspectiva 2.5D: los techos se alejan del centro de pantalla
-          const kx = (sx + TILE / 2 - W / 2) * 0.05;
-          const ky = (sy + TILE / 2 - H / 2) * 0.05;
           if (world.tiles.wallStyle === 'arbol') {
-            ctx.drawImage(world.tiles.arbol, sx + kx * 0.55, sy - 18 + ky * 0.55);
+            ctx.drawImage(world.tiles.arbol, sx, sy - 18);
           } else if (world.tiles.wallStyle === 'roca') {
-            ctx.drawImage(world.tiles.roca, sx + kx * 0.45, sy - 10 + ky * 0.45);
+            ctx.drawImage(world.tiles.roca, sx, sy - 10);
           } else {
-            const bits = (esWall(x, y - 1) ? 1 : 0) | (esWall(x + 1, y) ? 2 : 0) |
-                         (esWall(x, y + 1) ? 4 : 0) | (esWall(x - 1, y) ? 8 : 0);
-            // caras frontales primero (ancladas al suelo)
-            if (MapGen.at(g, x, y + 1) !== T.VACIO) {
-              const xStart = (bits & 8) ? 0 : Tiles.B0;
-              const xEnd = (bits & 2) ? TILE : Tiles.B1;
-              const segs = (bits & 4)
-                ? [[xStart, Tiles.B0], [Tiles.B1, xEnd]]
-                : [[xStart, xEnd]];
-              const tex = world.tiles.faceTexs[y % 3]; // misma variante por fila: rayado continuo
-              for (const [a, b] of segs) {
-                const wSeg = b - a;
-                if (wSeg <= 0) continue;
-                ctx.drawImage(tex, a, 0, wSeg, Tiles.FH, sx + a, sy + Tiles.B1, wSeg, Tiles.FH);
-                ctx.fillStyle = 'rgba(0,0,0,0.22)';
-                ctx.fillRect(sx + a, sy + Tiles.B1 + Tiles.FH, wSeg, 5);
-              }
+            // esquema HD-2D: cara frontal completa si el sur es transitable; techo si no
+            const surPared = esWall(x, y + 1);
+            if (!surPared && MapGen.at(g, x, y + 1) !== T.VACIO) {
+              ctx.drawImage(world.tiles.caraFull[(x * 7 + y * 13) % 3], sx, sy);
+              // sombra del muro proyectada sobre el suelo del sur
+              const sg = ctx.createLinearGradient(0, sy + TILE, 0, sy + TILE + 9);
+              sg.addColorStop(0, 'rgba(0,0,0,0.32)');
+              sg.addColorStop(1, 'rgba(0,0,0,0)');
+              ctx.fillStyle = sg;
+              ctx.fillRect(sx, sy + TILE, TILE, 9);
+            } else {
+              ctx.drawImage(world.tiles.techo, sx, sy);
+              // aristas del techo contra zonas abiertas
+              ctx.fillStyle = 'rgba(255,255,255,0.14)';
+              if (!esWall(x, y - 1)) ctx.fillRect(sx, sy, TILE, 2);
+              if (!esWall(x - 1, y)) ctx.fillRect(sx, sy, 2, TILE);
+              ctx.fillStyle = 'rgba(0,0,0,0.22)';
+              if (!esWall(x + 1, y)) ctx.fillRect(sx + TILE - 2, sy, 2, TILE);
             }
-            // lado extruido (silueta oscura intermedia) + techo desplazado
-            ctx.drawImage(world.tiles.topPiecesSombra[bits], sx + kx * 0.5, sy + ky * 0.5);
-            ctx.drawImage(world.tiles.topPieces[bits], sx + kx, sy + ky);
           }
         }
       }
@@ -659,6 +654,19 @@
 
     if (!window.NOFX) Effects.draw(ctx, cam.x, cam.y, t, TILE);
     ctx.restore(); // fin de la sacudida
+
+    // tilt-shift de diorama (sello HD-2D): bandas superior/inferior desenfocadas
+    if (!window.NOFX) {
+      ctx.save();
+      for (const [by, bh, blur] of [
+        [0, H * 0.10, 2.4], [H * 0.10, H * 0.06, 1.1],
+        [H * 0.84, H * 0.06, 1.1], [H * 0.90, H * 0.10, 2.4],
+      ]) {
+        ctx.filter = `blur(${blur}px)`;
+        ctx.drawImage(canvas, 0, by, W, bh, 0, by, W, bh);
+      }
+      ctx.restore();
+    }
 
     if (world.player.cordura < 30) {
       const sc = (30 - world.player.cordura) / 30;

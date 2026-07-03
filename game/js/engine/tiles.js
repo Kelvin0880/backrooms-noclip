@@ -6,7 +6,8 @@
   const G = 14;                    // grosor del tabique
   const B0 = (TILE - G) / 2;       // borde izquierdo/superior de la banda (17)
   const B1 = B0 + G;               // borde derecho/inferior de la banda (31)
-  const FH = 34;                   // alto de la cara frontal (2.5D)
+  const FH = 40;                   // alto de la cara frontal (HD-2D: casi todo el tile)
+  const RF = TILE - FH;            // franja de techo sobre la cara (8px)
 
   function shade(hex, f) {
     const n = parseInt(hex.slice(1), 16);
@@ -508,25 +509,44 @@
     return pieces;
   }
 
-  // faceTexs: 3 variantes de textura de cara a lo ancho completo (48×FH).
-  // El render recorta el segmento expuesto → el rayado casa entre tiles contiguos.
-  function buildFaceTexs(pal, bioma, rng) {
+  // HD-2D: cara frontal a tile completo (franja de techo arriba + muro vertical).
+  // Un tile de pared con vecino sur transitable se dibuja entero con esto.
+  function buildCaraFull(pal, bioma, rng) {
     const out = [];
     for (let v = 0; v < 3; v++) {
-      const c = canvas(TILE, FH), ctx = c.getContext('2d');
-      ctx.fillStyle = shade(pal.pared, 0.95);
+      const c = canvas(TILE, TILE), ctx = c.getContext('2d');
+      // franja de techo (remate superior del muro)
+      ctx.fillStyle = shade(pal.pared, 1.22);
+      ctx.fillRect(0, 0, TILE, RF);
+      ctx.fillStyle = shade(pal.pared, 1.45);           // arista iluminada
+      ctx.fillRect(0, RF - 2, TILE, 2);
+      // muro vertical con el grabado del nivel
+      ctx.save();
+      ctx.translate(0, RF);
+      ctx.fillStyle = shade(pal.pared, 0.98);
       ctx.fillRect(0, 0, TILE, FH);
       faceDetail(ctx, pal, bioma, rng, TILE);
-      // sombreado de volumen: más oscuro hacia abajo
+      // sombreado vertical HD-2D: luz arriba, sombra en la base
       const grad = ctx.createLinearGradient(0, 0, 0, FH);
-      grad.addColorStop(0, 'rgba(255,255,255,0.06)');
-      grad.addColorStop(0.6, 'rgba(0,0,0,0)');
-      grad.addColorStop(1, 'rgba(0,0,0,0.22)');
+      grad.addColorStop(0, 'rgba(255,255,255,0.08)');
+      grad.addColorStop(0.55, 'rgba(0,0,0,0)');
+      grad.addColorStop(1, 'rgba(0,0,0,0.28)');
       ctx.fillStyle = grad;
       ctx.fillRect(0, 0, TILE, FH);
+      ctx.restore();
       out.push(c);
     }
     return out;
+  }
+
+  // techo del muro (tile de pared con otra pared al sur)
+  function buildTecho(pal, rng) {
+    const c = canvas(TILE, TILE), ctx = c.getContext('2d');
+    ctx.fillStyle = shade(pal.pared, 1.18);
+    ctx.fillRect(0, 0, TILE, TILE);
+    speckle(ctx, rng, shade(pal.pared, 1.02), 60, 0, 0, TILE, TILE);
+    speckle(ctx, rng, shade(pal.pared, 1.35), 30, 0, 0, TILE, TILE);
+    return c;
   }
 
   // árbol (bosque) y roca (exterior): paredes orgánicas, sin autotile
@@ -620,7 +640,7 @@
   };
 
   window.Tiles = {
-    TILE, G, B0, B1, FH,
+    TILE, G, B0, B1, FH, RF,
     shade,
     build(levelDef, rng) {
       const pal = levelDef.paleta;
@@ -633,13 +653,11 @@
         suelo: [0, 1, 2].map((v) => floorTile(pal, estiloSuelo, rng, v)),
         agua: aguaTile(pal, rng),
         decor: decorTile(pal, levelDef.bioma, estiloSuelo, rng),
-        topPieces: wallStyle === 'tabique' ? buildTopPieces(pal, estiloPared, rng) : null,
-        topPiecesSombra: null, // se rellena abajo
-        faceTexs: wallStyle === 'tabique' ? buildFaceTexs(pal, estiloPared, rng) : null,
+        caraFull: wallStyle === 'tabique' ? buildCaraFull(pal, estiloPared, rng) : null,
+        techo: wallStyle === 'tabique' ? buildTecho(pal, rng) : null,
         arbol: wallStyle === 'arbol' ? arbolTile(pal, rng) : null,
         roca: wallStyle === 'roca' ? rocaTile(pal, rng) : null,
       };
-      if (out.topPieces) out.topPiecesSombra = out.topPieces.map((c) => darken(c, 0.55));
       return out;
     },
     darken,
