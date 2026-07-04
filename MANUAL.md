@@ -30,6 +30,8 @@ fluorescentes**, bloom cinematográfico y polvo en suspensión. Alternativas por
 | C | Códice del Errante (expediente y colección) |
 | 1-6 | Usar objeto de la mochila |
 | ESC | **Ajustes**: volumen, controles y opciones (aquí vive ahora el volumen) |
+| Clic izquierdo | **Usar la mano izquierda** (linterna, tubería, fuego griego…) |
+| Clic derecho | **Usar la mano derecha** (los objetos a 2 manos solo responden al clic izq.) |
 
 *(Mantener pulsada W camina a velocidad constante — sin ráfagas.)*
 
@@ -45,9 +47,17 @@ fluorescentes**, bloom cinematográfico y polvo en suspensión. Alternativas por
   que llegaste** (queda marcada donde apareces) — y cada nivel se conserva TAL CUAL lo
   dejaste. Excepción: si CAÍSTE (agujero, trampilla, vacío), no hay vuelta: nadie escala eso.
 - **Manos y mochila**: dos ranuras de mano (abajo a la derecha) + mochila de 6 huecos (`B`).
-  La linterna y las armas solo funcionan **empuñadas**: arrastra el objeto a una mano (o
-  botón EMPUÑAR en su ficha). Clic en una mano la guarda de vuelta. Los pasivos (chaqueta,
+  La linterna y las armas solo funcionan **empuñadas**: arrastra el objeto a una mano — en el
+  propio panel de la mochila o en el HUD — (o botón EMPUÑAR en su ficha). Clic en una mano la
+  guarda de vuelta; también puedes arrastrar la mano a la rejilla. Los pasivos (chaqueta,
   trébol, detector…) funcionan con solo llevarlos encima.
+- **Usar con el ratón**: clic izquierdo = mano izquierda, clic derecho = mano derecha.
+  Linterna: enciende/apaga. Tubería: golpe frontal a la casilla que encaras. Fuego griego
+  (2 manos) y guante: se descargan. Un objeto a 2 manos solo responde al clic izquierdo.
+- **Tirar objetos**: en la ficha de cualquier objeto de la mochila (clic sobre él) está el
+  botón «Tirar al suelo»: lo deja a tus pies y puedes recogerlo después.
+- **Cajas y contenedores**: taquillas, archivadores, neveras, cajas… TODOS se pueden
+  registrar con ESPACIO (dado de botín). Ya no hay cajas de atrezzo que confundan.
 - **Interacciones libres**: si hay agua, PUEDES bebértela (ESPACIO)… la wiki decide si era
   buena idea. Este patrón irá creciendo: el juego te deja hacer, el lore responde.
 - El **mapa** (`M`) dibuja solo lo explorado y lo conserva; si el nivel se reorganiza

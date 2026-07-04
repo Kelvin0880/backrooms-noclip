@@ -435,7 +435,10 @@
         const id = rng.pick(decorativos);
         const p = sitioPara(id);
         if (!libre(p)) continue;
-        props.push({ x: p[0], y: p[1], id, contenedor: false });
+        // las cajas de madera SIEMPRE se pueden registrar (v17): nada de
+        // decoración que parece un contenedor y frustra al clicarla
+        const esCont = id === 'caja';
+        props.push({ x: p[0], y: p[1], id, contenedor: esCont, registrado: esCont ? false : undefined });
       }
     }
     const nCont = rng.int(3, 5);
@@ -445,10 +448,11 @@
       if (!libre(p)) continue;
       props.push({ x: p[0], y: p[1], id, contenedor: true, registrado: false });
     }
-    // el reloj es exclusivo de Level 80
+    // el reloj es exclusivo de Level 80 — SIEMPRE colgado de una pared
     if (levelDef.id === 'level-80') {
       for (let i = 0; i < 6; i++) {
-        const p = rng.pick(reach);
+        const p = sitioPara('reloj');
+        if (!libre(p)) continue;
         props.push({ x: p[0], y: p[1], id: 'reloj', contenedor: false });
       }
     }

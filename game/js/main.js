@@ -168,6 +168,18 @@
     } else if (/^Digit[1-6]$/.test(ev.code)) Game.useItem(parseInt(ev.code.slice(5), 10) - 1);
   });
 
+  // ---------- ratón (v17): clic izq. usa la mano izquierda, clic der. la derecha ----------
+  for (const cv of [canvas, glCanvas]) {
+    if (!cv) continue;
+    cv.addEventListener('contextmenu', (ev) => ev.preventDefault());
+    cv.addEventListener('mousedown', (ev) => {
+      if (!world.level || world.over || world.busy) return;
+      if (document.getElementById('screen-card').style.display !== 'none') return;
+      if (ev.button === 0) Game.usarMano(0);
+      else if (ev.button === 2) Game.usarMano(1);
+    });
+  }
+
   // ---------- bucle de animación (solo visual; la lógica es por turnos) ----------
   function lerp(a, b, f) { return a + (b - a) * f; }
 
@@ -235,6 +247,15 @@
       }, 50);
     } else {
       setTimeout(() => document.getElementById('btn-enter').click(), 50);
+    }
+    // depuración visual: ?abrir=mochila abre el panel tras entrar
+    if (params.get('abrir') === 'mochila') {
+      setTimeout(() => {
+        world.player.inv.push('agua_almendras', 'botiquin', 'trebol');
+        world.player.manos[0] = 'tuberia';
+        world.ui.updateHUD();
+        world.ui.toggleBackpack(true);
+      }, 400);
     }
   }
   window.DEBUG_GAME = Game; // consola de depuración

@@ -437,18 +437,29 @@
         if (ruta !== wikiSrc) candidatos.push(ruta);
       }
       let i = 0;
+      let synthHecho = false;
       const intenta = () => {
         if (gen !== ambientGen) return; // llegó otro ambiente: abortar
-        if (i >= candidatos.length) { if (ctx) ambientSynth(levelDef); return; }
+        if (i >= candidatos.length) {
+          // una sola síntesis por generación (si no, cada rama huérfana
+          // arrancaba OTRO ambiente y solo el último era parable)
+          if (ctx && !synthHecho) { synthHecho = true; ambientSynth(levelDef); }
+          return;
+        }
         const el = new window.Audio(candidatos[i++]);
         el.loop = true;
         el.volume = Math.min(1, 0.62 * vol * volAmb);
-        el.addEventListener('error', intenta, { once: true });
+        // un archivo fallido dispara TANTO el evento 'error' COMO el rechazo de
+        // play(): sin este candado la cadena se bifurcaba en dos (acumulación)
+        let siguiente = false;
+        const next = () => { if (siguiente) return; siguiente = true; intenta(); };
+        el.addEventListener('error', next, { once: true });
         el.play().then(() => {
+          siguiente = true; // éxito: un error posterior del stream ya no encadena otro
           if (gen !== ambientGen) { el.pause(); el.src = ''; return; } // tardío: descartar
           ambientAudioEl = el;
           ambientStop = () => { el.pause(); el.src = ''; };
-        }).catch(intenta);
+        }).catch(next);
       };
       intenta();
     } catch (e) {}

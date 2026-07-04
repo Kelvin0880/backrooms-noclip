@@ -101,6 +101,28 @@ salida de retorno al nivel de la muerte). `window.OPTS` (localStorage `backrooms
 `dado:false` hace que showDice resuelva sin overlay (~120 ms). Parpadeo fluorescente raro y
 ocasional en render3d (`panelMat` + dlight, ~1 vez/min, no-op con `?nofx=1`).
 
+**v17 — expansión sin parón, mochila con ratón**: render3d reescrito en DOS grupos —
+`actorGroup` (jugador/entidades/items, persiste) y `staticGroup` (suelo/muros/techo/salidas/
+props). `construirEstatica(world, out)` es un GENERADOR: cambio de nivel = se consume
+síncrono (tapado por la tarjeta); expansión/remodelación = incremental con presupuesto
+~5 ms/frame mientras la escena vieja sigue en pantalla desplazada por `-shift`
+(`staticGroup.position`), y swap al terminar (`aplicarEstatica`). `quad()` emite normales
+explícitas (sin computeVertexNormals). `rebuildItems` rehace solo los sprites de items
+(también al cambiar `world.itemsVersion` — tirar objetos). Audio: fix REAL de la
+acumulación en sfx.js→ambient(): cada candidato fallido disparaba `intenta()` dos veces
+(error + catch de play) y bifurcaba cadenas → candado `siguiente` por intento y
+`synthHecho` por generación. Ratón: clic izq/der = `Game.usarMano(0/1)` (linterna toggle,
+tubería `atacarFrente()` a la casilla encarada, activos se gastan desde la mano; objetos
+`manos:2` SOLO clic izq). `Game.tirarItem(slot)` deja el objeto a tus pies con flag
+`recien` (no se auto-recoge hasta abandonar la casilla). Mochila rediseñada: manos DENTRO
+del panel (`bp-mano-0/1`, `pintarMano` compartido), drag en ambos sentidos, botón «Tirar
+al suelo» en la ficha; USAR desde la ficha cierra la mochila (si no, `world.busy` seguía
+activo y no hacía nada — bug v16). `fuego_griego` manos:2, `guante_paralisis` manos:1 (en
+objects.es.json → re-ejecutar build-data). mapgen: relojes de L80 con `sitioPara` (pared
+norte, placa 3D a altura de vista) y las cajas decorativas son contenedores registrables.
+`ladoTex()` en render3d: TODAS las caras de cajas/muebles/marcos con textura (nada plano).
+`?abrir=mochila` (con autostart) abre el panel para capturas.
+
 (Todos existen y están committeados. v3: render cenital con paredes finas autotile en `tiles.js`/`render.js`,
 pixel-art data-driven en `sprites.js` con override PNG desde `game/assets/sprites/`, efectos de combate
 en `effects.js`, props/contenedores registrables en `mapgen.js`/`game.js`.)

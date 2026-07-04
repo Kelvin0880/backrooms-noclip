@@ -104,36 +104,41 @@
     }
   }
 
-  function renderManos() {
+  // pinta UNA casilla de mano (sirve para el HUD y para el panel de la mochila)
+  function pintarMano(el, m, tam) {
     const manos = world.player.manos || [null, null];
-    for (let m = 0; m < 2; m++) {
-      const el = $('mano-' + m);
-      el.innerHTML = '';
-      el.classList.remove('activa', 'vacia');
-      // la mano pixel-art de fondo, espejada según el lado (v16)
+    el.innerHTML = '';
+    el.classList.remove('activa', 'vacia');
+    if (window.Icons) {
+      const hand = Icons.img('mano', tam, m === 1);
+      hand.classList.add('mano-img');
+      hand.style.marginLeft = (-tam / 2) + 'px';
+      el.appendChild(hand);
+    }
+    const id = manos[m];
+    if (id === '=') { el.title = 'Ocupada por el objeto a dos manos'; return; }
+    if (id) {
+      const def = world.data.objects[id];
       if (window.Icons) {
-        const hand = Icons.img('mano', 30, m === 1);
-        hand.classList.add('mano-img');
-        el.appendChild(hand);
+        const itTam = Math.round(tam * 0.75);
+        const it = Icons.img(ICONOS_INV[id] || 'interrogante', itTam);
+        it.classList.add('mano-item');
+        it.style.marginLeft = (-itTam / 2) + 'px';
+        el.appendChild(it);
       }
-      const id = manos[m];
-      if (id === '=') {
-        el.title = 'Ocupada por el objeto a dos manos';
-        continue;
-      }
-      if (id) {
-        const def = world.data.objects[id];
-        if (window.Icons) {
-          const it = Icons.img(ICONOS_INV[id] || 'interrogante', 22);
-          it.classList.add('mano-item');
-          el.appendChild(it);
-        }
-        el.title = `${def.nombre} (clic: guardar en la mochila)`;
-        if (id === 'linterna' && world.player.luz) el.classList.add('activa');
-      } else {
-        el.classList.add('vacia');
-        el.title = (m === 0 ? 'Mano izquierda' : 'Mano derecha') + ' (vacía)';
-      }
+      el.title = `${def.nombre} (clic: guardar en la mochila)`;
+      if (id === 'linterna' && world.player.luz) el.classList.add('activa');
+    } else {
+      el.classList.add('vacia');
+      el.title = (m === 0 ? 'Mano izquierda' : 'Mano derecha') + ' (vacía)';
+    }
+  }
+
+  function renderManos() {
+    for (let m = 0; m < 2; m++) {
+      pintarMano($('mano-' + m), m, 30);
+      const bp = $('bp-mano-' + m);
+      if (bp) pintarMano(bp, m, 40);
     }
   }
 
@@ -150,7 +155,11 @@
       if (id) {
         const def = world.data.objects[id];
         const ic = ICONOS_INV[id] || 'interrogante';
-        slot.appendChild(window.Icons ? Icons.img(ic, 24) : document.createTextNode('?'));
+        slot.appendChild(window.Icons ? Icons.img(ic, 28) : document.createTextNode('?'));
+        const nom = document.createElement('span');
+        nom.className = 'nombre';
+        nom.textContent = def.nombre;
+        slot.appendChild(nom);
         slot.title = `${def.nombre} — ${def.descripcion}`;
         slot.draggable = true;
         slot.addEventListener('dragstart', (e) => e.dataTransfer.setData('text/plain', String(i)));
@@ -164,7 +173,7 @@
   function toggleBackpack(force) {
     const vis = force !== undefined ? force : !backpackAbierta();
     $('backpack-panel').style.display = vis ? 'flex' : 'none';
-    if (vis) renderBackpack();
+    if (vis) { renderBackpack(); renderManos(); }
     if (window.Sfx) Sfx.play('ui');
     if (world.level && !world.over) {
       if (vis) world.busy = true;
@@ -175,17 +184,29 @@
     }
   }
 
-  // manos: clic desequipa; soltar un objeto arrastrado desde la mochila equipa
+  // manos (HUD y panel): clic desequipa; soltar un objeto arrastrado equipa;
+  // arrastrar una mano hasta la rejilla guarda el objeto en la mochila
   for (const m of [0, 1]) {
-    const el = $('mano-' + m);
-    el.onclick = () => Game.desequipar(m);
-    el.addEventListener('dragover', (e) => e.preventDefault());
-    el.addEventListener('drop', (e) => {
-      e.preventDefault();
-      const s = e.dataTransfer.getData('text/plain');
-      if (s !== '') Game.equipar(parseInt(s, 10));
-    });
+    for (const el of [$('mano-' + m), $('bp-mano-' + m)]) {
+      if (!el) continue;
+      el.onclick = () => Game.desequipar(m);
+      el.draggable = true;
+      el.addEventListener('dragstart', (e) => e.dataTransfer.setData('text/plain', 'mano:' + m));
+      el.addEventListener('dragover', (e) => e.preventDefault());
+      el.addEventListener('drop', (e) => {
+        e.preventDefault();
+        const s = e.dataTransfer.getData('text/plain');
+        if (s !== '' && !s.startsWith('mano:')) Game.equipar(parseInt(s, 10));
+      });
+    }
   }
+  const bpSlots = $('backpack-slots');
+  bpSlots.addEventListener('dragover', (e) => e.preventDefault());
+  bpSlots.addEventListener('drop', (e) => {
+    e.preventDefault();
+    const s = e.dataTransfer.getData('text/plain');
+    if (s.startsWith('mano:')) Game.desequipar(parseInt(s.slice(5), 10));
+  });
 
   // ---------- ventana de información de objeto ----------
   function efectoLegible(def) {
@@ -225,10 +246,13 @@
       def.efecto.toggle || def.efecto.activo);
     const btnUse = $('btn-item-use');
     btnUse.style.display = usable ? 'inline-block' : 'none';
-    btnUse.onclick = () => { cerrarItemInfo(); Game.useItem(slot); };
+    // usar CIERRA también la mochila: si no, world.busy sigue activo y la
+    // acción se tragaba sin hacer nada (bug v16)
+    btnUse.onclick = () => { cerrarItemInfo(); toggleBackpack(false); Game.useItem(slot); };
     const btnEq = $('btn-item-equip');
     btnEq.style.display = def.manos ? 'inline-block' : 'none';
     btnEq.onclick = () => { cerrarItemInfo(); Game.equipar(slot); };
+    $('btn-item-drop').onclick = () => { cerrarItemInfo(); Game.tirarItem(slot); };
     $('btn-item-close').onclick = cerrarItemInfo;
     $('item-modal').style.display = 'flex';
   }

@@ -26,7 +26,10 @@
   let fogBase = 0.08;
   let glCanvas, overlay, octx, W, H;
   let levelKey = null;
-  let levelGroup = null;
+  let staticGroup = null;        // suelo/muros/techo/salidas/props (reconstruible)
+  let actorGroup = null;         // jugador/entidades/items (sobrevive a los rebuilds)
+  let rebuild = null;            // generador de reconstrucción incremental en curso
+  let itemsVersionVista = -1;    // items del suelo rehechos al cambiar world.itemsVersion
   let entitySprites = new Map(); // uid -> THREE.Sprite
   let itemSprites = new Map();   // index -> sprite
   let playerSprite = null;
@@ -264,81 +267,122 @@
   let lastLevelId = null;
   let solidosCamara = [];
   const rayo = new THREE.Raycaster();
-  function disposeLevel(keepTex) {
-    if (!levelGroup) return;
-    levelGroup.traverse((o) => {
+
+  function disposeGrupo(grupo, keepTex) {
+    if (!grupo) return;
+    grupo.traverse((o) => {
       if (o.geometry) o.geometry.dispose();
       if (o.material) {
         const mats = Array.isArray(o.material) ? o.material : [o.material];
         for (const m of mats) { if (!keepTex && m.map) m.map.dispose(); m.dispose(); }
       }
     });
-    scene.remove(levelGroup);
-    levelGroup = null;
+    scene.remove(grupo);
+  }
+
+  // los actores (jugador/entidades/items) viven FUERA de la estática: así una
+  // reconstrucción del nivel no los toca y sus posiciones siguen siendo de mundo
+  function limpiarActores() {
+    if (actorGroup) disposeGrupo(actorGroup, true);
+    actorGroup = new THREE.Group();
+    scene.add(actorGroup);
     entitySprites.clear();
     itemSprites.clear();
     playerSprite = null;
-    panelMat = null;
-    flkHasta = 0;
-    if (!keepTex) texCache.clear(); // rebuilds del mismo nivel reutilizan texturas (sin hitch)
   }
 
-  function quad(pos, uv, idx, corners, uvRect) {
+  function quad(pos, uv, idx, corners, uvRect, nor) {
     const base = pos.length / 3;
     for (const c of corners) pos.push(c[0], c[1], c[2]);
     const [u0, v0, u1, v1] = uvRect;
     uv.push(u0, v1, u1, v1, u1, v0, u0, v0);
     idx.push(base, base + 1, base + 2, base, base + 2, base + 3);
+    if (nor) {
+      // normal del plano (las 4 esquinas son coplanares) — evita el pase caro
+      // de computeVertexNormals sobre decenas de miles de vértices
+      const ax = corners[1][0] - corners[0][0], ay = corners[1][1] - corners[0][1], az = corners[1][2] - corners[0][2];
+      const bx = corners[2][0] - corners[0][0], by = corners[2][1] - corners[0][1], bz = corners[2][2] - corners[0][2];
+      let nx = ay * bz - az * by, ny = az * bx - ax * bz, nz = ax * by - ay * bx;
+      const l = Math.hypot(nx, ny, nz) || 1;
+      nx /= l; ny /= l; nz /= l;
+      for (let i = 0; i < 4; i++) nor.push(nx, ny, nz);
+    }
   }
 
-  function buildLevel(world) {
-    const esMismoNivel = lastLevelId === world.level.id;
-    disposeLevel(esMismoNivel);
-    lastLevelId = world.level.id;
+  // texturas de lateral/tapa para cajas, muebles y marcos: NINGUNA cara plana (v17)
+  function ladoTex(clave, colorNum, estilo) {
+    const col = '#' + colorNum.toString(16).padStart(6, '0');
+    return pintado('lado-' + clave, () => lienzo(32, 32, (x, w, h) => {
+      x.fillStyle = col; x.fillRect(0, 0, w, h);
+      if (estilo === 'madera') {
+        for (let i = 0; i < 4; i++) { x.fillStyle = SH(col, 0.84); x.fillRect(0, 2 + i * 8, w, 2); }
+        x.fillStyle = SH(col, 1.1); x.fillRect(0, 0, w, 2);
+        x.strokeStyle = SH(col, 0.62); x.lineWidth = 2; x.strokeRect(1, 1, w - 2, h - 2);
+      } else { // metal
+        x.fillStyle = SH(col, 1.12); x.fillRect(0, 0, w, 3);
+        x.fillStyle = SH(col, 0.78); x.fillRect(0, h - 4, w, 4);
+        x.fillStyle = SH(col, 0.9);
+        for (const [px2, py2] of [[3, 3], [w - 5, 3], [3, h - 5], [w - 5, h - 5]])
+          x.fillRect(px2, py2, 2, 2);                              // remaches
+        x.strokeStyle = SH(col, 0.65); x.strokeRect(0.5, 0.5, w - 1, h - 1);
+      }
+    }));
+  }
+
+  // Construcción de la ESTÁTICA del nivel como GENERADOR (v17): el bucle de
+  // frame lo avanza con presupuesto de milisegundos — la expansión del nivel
+  // infinito ya no congela ni un frame (la escena vieja sigue en pantalla,
+  // realineada, hasta que la nueva está lista).
+  function* construirEstatica(world, out) {
     const g = world.map.grid;
     const T = MapGen.T;
     const tiles = world.tiles;
     const pal = world.level.paleta;
-    levelGroup = new THREE.Group();
+    const grupo = new THREE.Group();
+    if (out) out.parcial = grupo; // para poder desechar una construcción abortada
+    const solidos = [];
+    let panelMatNuevo = null;
 
     // --- SUELO CONTINUO: una sola textura seamless repetida con UV de mundo ---
-    // (adiós a los cuadrados divididos: el patrón fluye entre tiles)
     const floorTex = tex(tiles.sueloSeam || tiles.suelo[0], 'suelo-seam');
     floorTex.wrapS = floorTex.wrapT = THREE.RepeatWrapping;
     // la textura macro cubre 2×2 tiles → los UV de mundo se dividen entre 2
     const uvEsc = tiles.sueloSeam ? 0.5 : 1;
     const aguaTex = tex(tiles.agua, 'agua-tile');
-    const floorPos = [], floorUv = [], floorIdx = [];
-    const aguaPos = [], aguaUv = [], aguaIdx = [];
+    const floorPos = [], floorUv = [], floorIdx = [], floorNor = [];
+    const aguaPos = [], aguaUv = [], aguaIdx = [], aguaNor = [];
     const plantas = [];
     const esVerde = world.level.bioma === 'invernadero' || world.level.bioma === 'bosque';
-    for (let y = 0; y < g.h; y++)
+    for (let y = 0; y < g.h; y++) {
       for (let x = 0; x < g.w; x++) {
         const v = g.t[y * g.w + x];
         if (v === T.VACIO || v === T.PARED) continue;
         // UV = coordenadas de mundo → continuidad perfecta
         quad(floorPos, floorUv, floorIdx,
           [[x, 0, y + 1], [x + 1, 0, y + 1], [x + 1, 0, y], [x, 0, y]],
-          [x * uvEsc, y * uvEsc, (x + 1) * uvEsc, (y + 1) * uvEsc]);
+          [x * uvEsc, y * uvEsc, (x + 1) * uvEsc, (y + 1) * uvEsc], floorNor);
         if (v === T.AGUA)
           quad(aguaPos, aguaUv, aguaIdx,
             [[x, 0.02, y + 1], [x + 1, 0.02, y + 1], [x + 1, 0.02, y], [x, 0.02, y]],
-            [0, 0, 1, 1]);
+            [0, 0, 1, 1], aguaNor);
         else if (v === T.DECOR && esVerde) plantas.push([x, y]);
       }
-    const mkFlat = (pos, uv, idx, material) => {
+      if ((y & 15) === 15) yield;
+    }
+    const mkFlat = (pos, uv, idx, nor, material) => {
       const geo = new THREE.BufferGeometry();
       geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
       geo.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2));
+      geo.setAttribute('normal', new THREE.Float32BufferAttribute(nor, 3));
       geo.setIndex(idx);
-      geo.computeVertexNormals();
       const m = new THREE.Mesh(geo, material);
       m.receiveShadow = true;
       return m;
     };
-    levelGroup.add(mkFlat(floorPos, floorUv, floorIdx, new THREE.MeshLambertMaterial({ map: floorTex })));
+    grupo.add(mkFlat(floorPos, floorUv, floorIdx, floorNor, new THREE.MeshLambertMaterial({ map: floorTex })));
     if (aguaPos.length)
-      levelGroup.add(mkFlat(aguaPos, aguaUv, aguaIdx, new THREE.MeshLambertMaterial({ map: aguaTex })));
+      grupo.add(mkFlat(aguaPos, aguaUv, aguaIdx, aguaNor, new THREE.MeshLambertMaterial({ map: aguaTex })));
+    yield;
     // plantas 3D (dos planos cruzados) en salas-jardín/bosques
     if (plantas.length) {
       const plantaTex = pintado('p-planta', PINTORES.planta);
@@ -348,7 +392,7 @@
           const m = new THREE.Mesh(new THREE.PlaneGeometry(0.8, 0.85), plantaMat);
           m.position.set(x + 0.5, 0.42, y + 0.5);
           m.rotation.y = rot + ((x * 7 + y * 3) % 5) * 0.2;
-          levelGroup.add(m);
+          grupo.add(m);
         }
       }
     }
@@ -356,43 +400,48 @@
     // --- muros ---
     const esWall = (x, y) => MapGen.at(g, x, y) === T.PARED;
     if (tiles.wallStyle === 'tabique') {
-      const sidePos = [], sideUv = [], sideIdx = [];
-      const topPos = [], topUv = [], topIdx = [];
-      for (let y = 0; y < g.h; y++)
+      const sidePos = [], sideUv = [], sideIdx = [], sideNor = [];
+      const topPos = [], topUv = [], topIdx = [], topNor = [];
+      for (let y = 0; y < g.h; y++) {
         for (let x = 0; x < g.w; x++) {
           if (!esWall(x, y)) continue;
           const h = WALL_H;
           // caras laterales solo hacia espacios abiertos (culling interior)
           if (!esWall(x, y + 1)) quad(sidePos, sideUv, sideIdx,
-            [[x, 0, y + 1], [x + 1, 0, y + 1], [x + 1, h, y + 1], [x, h, y + 1]], [0, 0, 1, 1]);
+            [[x, 0, y + 1], [x + 1, 0, y + 1], [x + 1, h, y + 1], [x, h, y + 1]], [0, 0, 1, 1], sideNor);
           if (!esWall(x, y - 1)) quad(sidePos, sideUv, sideIdx,
-            [[x + 1, 0, y], [x, 0, y], [x, h, y], [x + 1, h, y]], [0, 0, 1, 1]);
+            [[x + 1, 0, y], [x, 0, y], [x, h, y], [x + 1, h, y]], [0, 0, 1, 1], sideNor);
           if (!esWall(x - 1, y)) quad(sidePos, sideUv, sideIdx,
-            [[x, 0, y], [x, 0, y + 1], [x, h, y + 1], [x, h, y]], [0, 0, 1, 1]);
+            [[x, 0, y], [x, 0, y + 1], [x, h, y + 1], [x, h, y]], [0, 0, 1, 1], sideNor);
           if (!esWall(x + 1, y)) quad(sidePos, sideUv, sideIdx,
-            [[x + 1, 0, y + 1], [x + 1, 0, y], [x + 1, h, y], [x + 1, h, y + 1]], [0, 0, 1, 1]);
+            [[x + 1, 0, y + 1], [x + 1, 0, y], [x + 1, h, y], [x + 1, h, y + 1]], [0, 0, 1, 1], sideNor);
           quad(topPos, topUv, topIdx,
-            [[x, h, y + 1], [x + 1, h, y + 1], [x + 1, h, y], [x, h, y]], [0, 0, 1, 1]);
+            [[x, h, y + 1], [x + 1, h, y + 1], [x + 1, h, y], [x, h, y]], [0, 0, 1, 1], topNor);
         }
-      const mkMesh = (pos, uv, idx, canvas, key, sombra) => {
+        if ((y & 15) === 15) yield;
+      }
+      const mkMesh = (pos, uv, idx, nor, canvas, key, sombra) => {
         const geo = new THREE.BufferGeometry();
         geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
         geo.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2));
+        geo.setAttribute('normal', new THREE.Float32BufferAttribute(nor, 3));
         geo.setIndex(idx);
-        geo.computeVertexNormals();
         const m = new THREE.Mesh(geo, new THREE.MeshLambertMaterial({ map: tex(canvas, key) }));
         m.castShadow = sombra;
         m.receiveShadow = true;
         return m;
       };
       // cara sin la franja de techo (solo el muro): recorte del caraFull
-      const caraSolo = document.createElement('canvas');
-      caraSolo.width = 48; caraSolo.height = 48;
-      caraSolo.getContext('2d').drawImage(tiles.caraFull[1], 0, Tiles.RF, 48, Tiles.FH, 0, 0, 48, 48);
-      const lados = mkMesh(sidePos, sideUv, sideIdx, caraSolo, 'muro-lado', true);
-      const techos = mkMesh(topPos, topUv, topIdx, tiles.techo, 'muro-techo', false);
-      levelGroup.add(lados, techos);
-      solidosCamara = [lados, techos]; // para la colisión de la cámara
+      let caraSolo = texCache.get('muro-lado') ? null : document.createElement('canvas');
+      if (caraSolo) {
+        caraSolo.width = 48; caraSolo.height = 48;
+        caraSolo.getContext('2d').drawImage(tiles.caraFull[1], 0, Tiles.RF, 48, Tiles.FH, 0, 0, 48, 48);
+      }
+      const lados = mkMesh(sidePos, sideUv, sideIdx, sideNor, caraSolo, 'muro-lado', true);
+      const techos = mkMesh(topPos, topUv, topIdx, topNor, tiles.techo, 'muro-techo', false);
+      grupo.add(lados, techos);
+      solidos.push(lados, techos); // para la colisión de la cámara
+      yield;
 
       // --- TECHO REAL (solo 3ª persona e interiores): la cámara va por debajo,
       // así que el nivel se siente un interior cerrado de verdad. Los paneles
@@ -407,19 +456,19 @@
           ctx2.fillRect(6, 8, 10, 6); ctx2.fillRect(30, 26, 8, 9);
         }));
         plafonTex.wrapS = plafonTex.wrapT = THREE.RepeatWrapping;
-        const cPos = [], cUv = [], cIdx = [];
+        const cPos = [], cUv = [], cIdx = [], cNor = [];
         const pPos = [], pUv = [], pIdx = [];
         // paneles cada 4×4 tiles en niveles iluminados, 6×6 en penumbra, ninguno a oscuras
         const osc = world.level.oscuridad || 0;
         const cada = osc < 0.45 ? 4 : osc < 0.75 ? 6 : 0;
-        for (let y = 0; y < g.h; y++)
+        for (let y = 0; y < g.h; y++) {
           for (let x = 0; x < g.w; x++) {
             const v = g.t[y * g.w + x];
             if (v === T.VACIO || v === T.PARED) continue;
             // cara inferior del techo (se ve desde abajo)
             quad(cPos, cUv, cIdx,
               [[x, WALL_H, y], [x + 1, WALL_H, y], [x + 1, WALL_H, y + 1], [x, WALL_H, y + 1]],
-              [x, y, x + 1, y + 1]);
+              [x, y, x + 1, y + 1], cNor);
             if (cada && x % cada === Math.floor(cada / 2) && y % cada === Math.floor(cada / 2)) {
               const ejeX = !esWall(x - 1, y) && !esWall(x + 1, y);
               const hw = ejeX ? 0.42 : 0.16, hd = ejeX ? 0.16 : 0.42;
@@ -430,38 +479,43 @@
                 [0, 0, 1, 1]);
             }
           }
+          if ((y & 15) === 15) yield;
+        }
         if (cPos.length) {
           const cgeo = new THREE.BufferGeometry();
           cgeo.setAttribute('position', new THREE.Float32BufferAttribute(cPos, 3));
           cgeo.setAttribute('uv', new THREE.Float32BufferAttribute(cUv, 2));
+          cgeo.setAttribute('normal', new THREE.Float32BufferAttribute(cNor, 3));
           cgeo.setIndex(cIdx);
-          cgeo.computeVertexNormals();
-          levelGroup.add(new THREE.Mesh(cgeo, new THREE.MeshLambertMaterial({ map: plafonTex })));
+          grupo.add(new THREE.Mesh(cgeo, new THREE.MeshLambertMaterial({ map: plafonTex })));
         }
         if (pPos.length) {
           const pgeo = new THREE.BufferGeometry();
           pgeo.setAttribute('position', new THREE.Float32BufferAttribute(pPos, 3));
           pgeo.setAttribute('uv', new THREE.Float32BufferAttribute(pUv, 2));
           pgeo.setIndex(pIdx);
-          panelMat = new THREE.MeshBasicMaterial({
+          panelMatNuevo = new THREE.MeshBasicMaterial({
             color: 0xfff6dc, toneMapped: false, fog: false,
           });
-          levelGroup.add(new THREE.Mesh(pgeo, panelMat));
+          grupo.add(new THREE.Mesh(pgeo, panelMatNuevo));
         }
+        yield;
       }
     } else {
       // bosque/exterior: árboles y rocas como billboards verticales
       const canvas = tiles.wallStyle === 'arbol' ? tiles.arbol : tiles.roca;
       const mat = new THREE.SpriteMaterial({ map: tex(canvas, 'muro-organico'), transparent: true });
-      for (let y = 0; y < g.h; y++)
+      for (let y = 0; y < g.h; y++) {
         for (let x = 0; x < g.w; x++) {
           if (!esWall(x, y)) continue;
           const s = new THREE.Sprite(mat);
           const escala = tiles.wallStyle === 'arbol' ? 1.5 : 1.25;
           s.scale.set(escala, escala * (canvas.height / canvas.width), 1);
           s.position.set(x + 0.5, escala * 0.48, y + 0.5);
-          levelGroup.add(s);
+          grupo.add(s);
         }
+        if ((y & 15) === 15) yield;
+      }
     }
 
     // --- salidas (pintores a medida) ---
@@ -475,17 +529,17 @@
         // pedestal 3D con la nave encima (billboard detallado existente)
         const ped = new THREE.Mesh(
           new THREE.BoxGeometry(0.5, 0.6, 0.5),
-          new THREE.MeshLambertMaterial({ color: 0x6a6a72 })
+          new THREE.MeshLambertMaterial({ map: ladoTex('pedestal', 0x6a6a72, 'metal') })
         );
         ped.position.set(ex.x + 0.5, 0.3, ex.y + 0.5);
         ped.castShadow = true;
-        levelGroup.add(ped);
+        grupo.add(ped);
         const s = new THREE.Sprite(new THREE.SpriteMaterial({
           map: tex(Render.exitToCanvas(ex.def), 'exit-' + exI), transparent: true,
         }));
         s.scale.set(0.8, 1.2, 1);
         s.position.set(ex.x + 0.5, 0.95, ex.y + 0.5);
-        levelGroup.add(s);
+        grupo.add(s);
         return;
       }
       if (estilo === 'trampilla' || estilo === 'escalera') {
@@ -496,7 +550,7 @@
         );
         m.rotation.x = -Math.PI / 2;
         m.position.set(ex.x + 0.5, 0.025, ex.y + 0.5);
-        levelGroup.add(m);
+        grupo.add(m);
         return;
       }
       // sin pared al norte no hay puerta que valga: se degrada a trampilla
@@ -509,22 +563,22 @@
         );
         m.rotation.x = -Math.PI / 2;
         m.position.set(ex.x + 0.5, 0.025, ex.y + 0.5);
-        levelGroup.add(m);
+        grupo.add(m);
         return;
       }
-      // elementos de pared con su pintor y tamaño propios
+      // elementos de pared con su pintor, tamaño y material de canto propios
       const SPEC = {
-        vending: { p: 'vending', w: 0.8, h: 1.32, y: 0.66, grosor: 0.42 },
-        reloj: { p: 'reloj', w: 0.9, h: 0.5, y: 1.15, grosor: 0.06 },
-        boton: { p: 'boton', w: 0.52, h: 0.52, y: 1.0, grosor: 0.06 },
-        edificio: { p: 'edificio', w: 0.95, h: 1.4, y: 0.7, grosor: 0.12 },
-        ventana: { p: 'ventana', w: 0.9, h: 1.3, y: 0.75, grosor: 0.07 },
-        puerta: { p: 'puerta', w: 0.92, h: 1.36, y: 0.68, grosor: 0.08 },
+        vending: { p: 'vending', w: 0.8, h: 1.32, y: 0.66, grosor: 0.42, ladoCol: 0x701828, ladoEst: 'metal' },
+        reloj: { p: 'reloj', w: 0.9, h: 0.5, y: 1.15, grosor: 0.06, ladoCol: 0x20242a, ladoEst: 'metal' },
+        boton: { p: 'boton', w: 0.52, h: 0.52, y: 1.0, grosor: 0.06, ladoCol: 0x8a92a0, ladoEst: 'metal' },
+        edificio: { p: 'edificio', w: 0.95, h: 1.4, y: 0.7, grosor: 0.12, ladoCol: 0x2c333d, ladoEst: 'metal' },
+        ventana: { p: 'ventana', w: 0.9, h: 1.3, y: 0.75, grosor: 0.07, ladoCol: 0x2a2a2e, ladoEst: 'metal' },
+        puerta: { p: 'puerta', w: 0.92, h: 1.36, y: 0.68, grosor: 0.08, ladoCol: 0x241c14, ladoEst: 'madera' },
       };
       const spec = SPEC[rit] ?? SPEC[estilo] ?? SPEC.puerta;
       const t2 = pintado('p-' + spec.p + col, () => PINTORES[spec.p](col));
       const frente = new THREE.MeshBasicMaterial({ map: t2 });
-      const lado = new THREE.MeshLambertMaterial({ color: 0x241c14 });
+      const lado = new THREE.MeshLambertMaterial({ map: ladoTex(spec.p, spec.ladoCol, spec.ladoEst) });
       const m = new THREE.Mesh(
         new THREE.BoxGeometry(spec.w, spec.h, spec.grosor),
         [lado, lado, lado, lado, frente, lado]
@@ -532,52 +586,77 @@
       // pegado al muro norte; si no hay muro (raro), exento pero sólido
       m.position.set(ex.x + 0.5, spec.y, paredNorte ? ex.y + spec.grosor / 2 + 0.01 : ex.y + 0.5);
       m.castShadow = true;
-      levelGroup.add(m);
+      grupo.add(m);
     });
+    yield;
 
     // --- props: muebles como GEOMETRÍA 3D empotrada, no sprays 2D ---
     const PROPS_PARED = new Set(['taquilla', 'archivador', 'nevera', 'reloj', 'camilla']);
     const CAJAS = new Set(['cofre', 'caja', 'bidon']);
     const LADO_COLOR = {
       taquilla: 0x46525c, archivador: 0x625c4e, nevera: 0xa8b0ac, camilla: 0x7e8882,
-      reloj: 0x4e3d2b, cofre: 0x5e4830, caja: 0x6e5434, bidon: 0x324a3e,
+      reloj: 0x20242a, cofre: 0x5e4830, caja: 0x6e5434, bidon: 0x324a3e,
     };
+    const LADO_ESTILO = {
+      taquilla: 'metal', archivador: 'metal', nevera: 'metal', camilla: 'metal',
+      reloj: 'metal', cofre: 'madera', caja: 'madera', bidon: 'metal',
+    };
+    const ladoDe = (id) => new THREE.MeshLambertMaterial({
+      map: ladoTex(id, LADO_COLOR[id] ?? 0x555550, LADO_ESTILO[id] ?? 'metal'),
+    });
     for (const pr of world.map.props || []) {
       const arrimado = PROPS_PARED.has(pr.id) && esWall(pr.x, pr.y - 1);
       const conPintor = PINTORES[pr.id];
-      if (arrimado && conPintor) {
+      if (pr.id === 'reloj' && arrimado) {
+        // reloj digital 88:88 (Level 80): PLACA colgada del muro a la altura de
+        // la vista — nunca un armario plantado en medio del pasillo
+        const frente = new THREE.MeshBasicMaterial({ map: pintado('p-reloj', PINTORES.reloj) });
+        const lado = ladoDe('reloj');
+        const m = new THREE.Mesh(
+          new THREE.BoxGeometry(0.9, 0.5, 0.08),
+          [lado, lado, lado, lado, frente, lado]
+        );
+        m.position.set(pr.x + 0.5, 1.15, pr.y + 0.05);
+        grupo.add(m);
+        pr._mesh3d = m;
+      } else if (arrimado && conPintor) {
         // mueble EMPOTRADO contra el muro con su frente pintado a medida
         const esCamilla = pr.id === 'camilla';
         const frente = new THREE.MeshLambertMaterial({ map: pintado('p-' + pr.id, conPintor) });
-        const lado = new THREE.MeshLambertMaterial({ color: LADO_COLOR[pr.id] ?? 0x555550 });
+        const lado = ladoDe(pr.id);
         const m = new THREE.Mesh(
           esCamilla ? new THREE.BoxGeometry(0.92, 0.56, 0.42) : new THREE.BoxGeometry(0.66, 1.14, 0.32),
           [lado, lado, lado, lado, frente, lado]
         );
         m.position.set(pr.x + 0.5, esCamilla ? 0.28 : 0.57, pr.y + (esCamilla ? 0.28 : 0.18));
         m.castShadow = true;
-        levelGroup.add(m);
+        grupo.add(m);
         pr._mesh3d = m;
       } else if (pr.id === 'bidon') {
-        // cilindro de verdad
+        // cilindro de verdad (lateral pintado + tapas de metal, nada plano)
         const m = new THREE.Mesh(
           new THREE.CylinderGeometry(0.26, 0.26, 0.66, 10),
-          new THREE.MeshLambertMaterial({ map: pintado('p-bidon', PINTORES.bidon) })
+          [new THREE.MeshLambertMaterial({ map: pintado('p-bidon', PINTORES.bidon) }),
+           ladoDe('bidon'), ladoDe('bidon')]
         );
         m.position.set(pr.x + 0.5, 0.33, pr.y + 0.5);
         m.castShadow = true;
-        levelGroup.add(m);
+        grupo.add(m);
         pr._mesh3d = m;
       } else if (CAJAS.has(pr.id) && conPintor) {
+        // la caja de tablones lleva su textura en LAS SEIS caras; el cofre,
+        // frente pintado + cantos de madera con veta
         const frente = new THREE.MeshLambertMaterial({ map: pintado('p-' + pr.id, conPintor) });
-        const lado = new THREE.MeshLambertMaterial({ color: LADO_COLOR[pr.id] ?? 0x6e5434 });
+        const lado = ladoDe(pr.id);
         const m = new THREE.Mesh(
           new THREE.BoxGeometry(0.55, 0.62, 0.45),
-          [lado, lado, lado, lado, frente, lado]
+          pr.id === 'caja'
+            ? frente
+            : [lado, lado, lado, lado, frente, lado]
         );
         m.position.set(pr.x + 0.5, 0.31, pr.y + 0.5);
         m.castShadow = true;
-        levelGroup.add(m);
+        grupo.add(m);
         pr._mesh3d = m;
       } else {
         // props menores como PRIMITIVAS 3D (nada de sprays 2D)
@@ -654,34 +733,25 @@
           }
         }
         grp.position.set(pr.x + 0.5, 0, pr.y + 0.5);
-        levelGroup.add(grp);
+        grupo.add(grp);
         pr._mesh3d = grp;
       }
     }
 
-    // --- objetos del suelo ---
-    for (let i = 0; i < world.map.items.length; i++) {
-      const it = world.map.items[i];
-      const c = Render.itemToCanvas(it.id, world.data.objects);
-      const s = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex(c, 'item-' + it.id), transparent: true }));
-      s.scale.set(0.55, 0.6, 1);
-      s.position.set(it.x + 0.5, 0.22, it.y + 0.5);
-      levelGroup.add(s);
-      itemSprites.set(i, s);
-    }
+    return { grupo, solidos, panelMatNuevo };
+  }
 
-    // --- jugador ---
-    playerSprite = new THREE.Sprite(new THREE.SpriteMaterial({ transparent: true }));
-    playerSprite.scale.set(1, SPRITE_H, 1);
-    levelGroup.add(playerSprite);
+  // instala la estática recién construida (swap) y la atmósfera del nivel
+  function aplicarEstatica(world, res) {
+    if (staticGroup) disposeGrupo(staticGroup, true);
+    staticGroup = res.grupo;
+    scene.add(staticGroup);
+    solidosCamara = res.solidos;
+    panelMat = res.panelMatNuevo;
+    flkHasta = 0;
+    if (window.Atmos3D) Atmos3D.buildLevel(world, staticGroup);
 
-    // luminarias del nivel (emisores, haces y charcos van dentro del grupo:
-    // se eliminan solos con disposeLevel)
-    if (window.Atmos3D) Atmos3D.buildLevel(world, levelGroup);
-
-    scene.add(levelGroup);
-
-    // --- atmósfera del nivel ---
+    const pal = world.level.paleta;
     const fondo = new THREE.Color(pal.fondo);
     scene.background = fondo;
     fogBase = 0.08 + world.level.oscuridad * 0.16;
@@ -689,30 +759,38 @@
     amb.intensity = Math.max(0.12, 0.55 - world.level.oscuridad * 0.4);
     plight.color = new THREE.Color(pal.luz);
     plight.distance = (world.visionActual() + 3) * 1.6;
+  }
 
-    if (tiles.wallStyle !== 'tabique') solidosCamara = [];
-
-    const p = world.player;
-    if (world._shift3d) {
-      // expansión del nivel infinito: la cámara se desplaza EXACTAMENTE con el
-      // mundo → ni un píxel de salto en pantalla
-      camera.position.x -= world._shift3d.x;
-      camera.position.z -= world._shift3d.z;
-      if (frame._look) { frame._look.x -= world._shift3d.x; frame._look.z -= world._shift3d.z; }
-      world._shift3d = null;
-    } else if (!esMismoNivel || !frame._look) {
-      // nivel nuevo: centrado inmediato (según el modo de cámara)
-      if (CAM_MODO === 'tercera') {
-        const [fx0, fz0] = ROT_VEC[p.rot ?? 2];
-        camYaw = Math.atan2(-fx0, -fz0);
-        camera.position.set(p.rx + 0.5 - fx0 * TP.dist, TP.alto, p.ry + 0.5 - fz0 * TP.dist);
-        frame._look = new THREE.Vector3(p.rx + 0.5 + fx0 * TP.lookAhead, TP.lookY, p.ry + 0.5 + fz0 * TP.lookAhead);
-      } else {
-        camera.position.set(p.rx + 0.5, CAM.dy, p.ry + 0.5 + CAM.dz);
-        frame._look = new THREE.Vector3(p.rx + 0.5, CAM.lookY, p.ry + 0.5);
-      }
+  // sprites de los objetos del suelo: baratos, indexados por posición en el
+  // array — se rehacen enteros al cambiar el mapa o world.itemsVersion (tirar)
+  function rebuildItems(world) {
+    for (const s of itemSprites.values()) { actorGroup.remove(s); s.material.dispose(); }
+    itemSprites.clear();
+    for (let i = 0; i < world.map.items.length; i++) {
+      const it = world.map.items[i];
+      if (it.taken) continue;
+      const c = Render.itemToCanvas(it.id, world.data.objects);
+      const s = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex(c, 'item-' + it.id), transparent: true }));
+      s.scale.set(0.55, 0.6, 1);
+      s.position.set(it.x + 0.5, 0.22, it.y + 0.5);
+      actorGroup.add(s);
+      itemSprites.set(i, s);
     }
-    // (remodelaciones del mismo nivel: la cámara no se toca)
+    itemsVersionVista = world.itemsVersion || 0;
+  }
+
+  // centrado inmediato de cámara al entrar en un nivel nuevo
+  function centrarCamara(world) {
+    const p = world.player;
+    if (CAM_MODO === 'tercera') {
+      const [fx0, fz0] = ROT_VEC[p.rot ?? 2];
+      camYaw = Math.atan2(-fx0, -fz0);
+      camera.position.set(p.rx + 0.5 - fx0 * TP.dist, TP.alto, p.ry + 0.5 - fz0 * TP.dist);
+      frame._look = new THREE.Vector3(p.rx + 0.5 + fx0 * TP.lookAhead, TP.lookY, p.ry + 0.5 + fz0 * TP.lookAhead);
+    } else {
+      camera.position.set(p.rx + 0.5, CAM.dy, p.ry + 0.5 + CAM.dz);
+      frame._look = new THREE.Vector3(p.rx + 0.5, CAM.lookY, p.ry + 0.5);
+    }
   }
 
   function spriteTex(glyph, frame) {
@@ -766,10 +844,65 @@
     if (!world.level || !world.map) return;
     const key = world.level.id + '::' + (world.entryCount?.[world.level.id] ?? 0) +
       '::' + (world.mapaVersion || 0); // remodelaciones no euclidianas → rebuild
-    if (key !== levelKey) { levelKey = key; buildLevel(world); }
+    if (key !== levelKey) {
+      const esMismoNivel = lastLevelId === world.level.id && staticGroup;
+      levelKey = key;
+      lastLevelId = world.level.id;
+      if (world._shift3d) {
+        // expansión del nivel infinito: cámara y escena vieja se desplazan
+        // EXACTAMENTE con el mundo → ni un píxel de salto en pantalla
+        camera.position.x -= world._shift3d.x;
+        camera.position.z -= world._shift3d.z;
+        if (frame._look) { frame._look.x -= world._shift3d.x; frame._look.z -= world._shift3d.z; }
+        if (staticGroup) {
+          staticGroup.position.x -= world._shift3d.x;
+          staticGroup.position.z -= world._shift3d.z;
+        }
+        world._shift3d = null;
+      }
+      if (!esMismoNivel) {
+        // nivel NUEVO: purga total y construcción síncrona (la tarjeta de
+        // nivel tapa la pantalla: aquí el coste es invisible)
+        if (rebuild) { disposeGrupo(rebuild.parcial, true); rebuild = null; }
+        disposeGrupo(staticGroup, false);
+        staticGroup = null;
+        texCache.clear();
+        limpiarActores();
+        const gen = construirEstatica(world);
+        let r; do { r = gen.next(); } while (!r.done);
+        aplicarEstatica(world, r.value);
+        rebuildItems(world);
+        centrarCamara(world);
+      } else {
+        // expansión/remodelación del MISMO nivel: reconstrucción incremental.
+        // La escena vieja (realineada) sigue en pantalla; lo nuevo está tras
+        // la niebla. Si había otra en curso, se descarta y se reinicia.
+        if (rebuild) disposeGrupo(rebuild.parcial, true);
+        rebuild = { parcial: null };
+        rebuild.gen = construirEstatica(world, rebuild);
+        rebuildItems(world); // los índices del array de items ya cambiaron
+      }
+    }
+    // avanza la reconstrucción incremental con presupuesto de ~5 ms por frame
+    if (rebuild) {
+      const t0 = performance.now();
+      let r;
+      do { r = rebuild.gen.next(); } while (!r.done && performance.now() - t0 < 5);
+      if (r.done) {
+        aplicarEstatica(world, r.value);
+        rebuild = null;
+      }
+    }
+    // items del suelo: rehacer si la lógica los cambió (tirar/arrojar objetos)
+    if ((world.itemsVersion || 0) !== itemsVersionVista) rebuildItems(world);
 
     const p = world.player;
     const px = p.rx + 0.5, pz = p.ry + 0.5;
+    if (!playerSprite) {
+      playerSprite = new THREE.Sprite(new THREE.SpriteMaterial({ transparent: true }));
+      playerSprite.scale.set(1, SPRITE_H, 1);
+      actorGroup.add(playerSprite);
+    }
 
     // jugador: orientación del sprite RELATIVA a la cámara
     let sid, sflip = false;
@@ -816,7 +949,7 @@
         s = new THREE.Sprite(new THREE.SpriteMaterial({ transparent: true }));
         s.scale.set(1, SPRITE_H, 1);
         if (e.def.glyph === 'smiler') s.material.fog = false; // brilla en la oscuridad
-        levelGroup.add(s);
+        actorGroup.add(s);
         entitySprites.set(e.uid, s);
       }
       const visible = entVisible(world, e);
@@ -846,7 +979,7 @@
     }
 
     // objetos recogidos
-    for (const [i, s] of itemSprites) s.visible = !world.map.items[i].taken;
+    for (const [i, s] of itemSprites) s.visible = !(world.map.items[i]?.taken ?? true);
 
     // luz del jugador con flicker fluorescente
     let flicker = 1;

@@ -78,10 +78,20 @@
         <button id="btn-mochila" title="Mochila (B)"></button>
       </div>
       <div id="backpack-panel" style="display:none">
-        <div class="modal-box">
-          <h3>Mochila</h3>
-          <div id="backpack-slots"></div>
-          <p class="warn" style="font-size:14px">Clic en un objeto: información y equipar. Arrastra a una mano para empuñarlo.</p>
+        <div class="modal-box" id="backpack-box">
+          <h3><span data-icon="mochila" data-icon-size="20"></span> Mochila del errante</h3>
+          <div id="backpack-layout">
+            <div class="bp-mano-col">
+              <div class="mano-slot bp-mano" id="bp-mano-0" title="Mano izquierda"></div>
+              <span class="bp-label">mano izq.<br>(clic izq.)</span>
+            </div>
+            <div id="backpack-slots"></div>
+            <div class="bp-mano-col">
+              <div class="mano-slot bp-mano" id="bp-mano-1" title="Mano derecha"></div>
+              <span class="bp-label">mano der.<br>(clic der.)</span>
+            </div>
+          </div>
+          <p class="warn" id="bp-hint">Arrastra un objeto a una mano para empuñarlo (y de la mano a la mochila para guardarlo).<br>Clic en un objeto: su ficha — usar, tirar o empuñar. En juego: clic izq./der. usa cada mano.</p>
           <button id="btn-backpack-close" class="btn-small">Cerrar (B)</button>
         </div>
       </div>
@@ -123,6 +133,7 @@
       <div class="modal-btns">
         <button id="btn-item-use" class="btn-big" style="font-size:12px;padding:10px 20px">USAR</button>
         <button id="btn-item-equip" class="btn-big" style="font-size:12px;padding:10px 20px">EMPUÑAR</button>
+        <button id="btn-item-drop" class="btn-small">Tirar al suelo</button>
         <button id="btn-item-close" class="btn-small">Cerrar</button>
       </div>
     </div>

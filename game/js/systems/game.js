@@ -540,7 +540,13 @@
 
     // recogida de objetos
     for (const it of world.map.items) {
-      if (!it.taken && it.x === world.player.x && it.y === world.player.y) {
+      if (it.taken) continue;
+      if (it.recien) {
+        // recién tirado: no se auto-recoge hasta que abandones su casilla
+        if (it.x !== world.player.x || it.y !== world.player.y) it.recien = false;
+        continue;
+      }
+      if (it.x === world.player.x && it.y === world.player.y) {
         if (world.player.inv.length >= 6) {
           world.log('Inventario lleno. Lo dejas atrás.', 'event');
         } else {
@@ -793,6 +799,7 @@
   const NOMBRES_CONT = {
     taquilla: 'la taquilla', archivador: 'el archivador',
     nevera: 'la nevera de suministros', cofre: 'la caja',
+    caja: 'la caja de madera',
   };
   function registrar(cont) {
     cont.registrado = true;
@@ -884,6 +891,45 @@
     world.ui.updateHUD();
   }
 
+  // efectos activos (compartidos por mochila y manos)
+  function lanzarFuego() {
+    world.log('¡Lanzas el fuego griego! Las llamas se extienden a tu alrededor.', 'good');
+    if (window.Sfx) Sfx.play('golpe');
+    let alcanzadas = 0;
+    for (const e of world.entities) {
+      if (!e.viva) continue;
+      if (Math.abs(e.x - world.player.x) + Math.abs(e.y - world.player.y) > 3) continue;
+      e.vida -= 30;
+      e._hitT = performance.now();
+      e.huyendo = 8;
+      e.revelada = true;
+      alcanzadas++;
+      if (window.Effects) {
+        Effects.particles(e.x, e.y, '#ff8a30', 14);
+        Effects.number(e.x, e.y, '−30', '#ff8a30');
+      }
+      if (e.vida <= 0) { e.viva = false; world.log(`${e.def.nombre} arde hasta desaparecer.`, 'good'); }
+    }
+    if (window.Effects) Effects.flash(world.player.x, world.player.y, '#ff8a30');
+    if (!alcanzadas) world.log('Las llamas se apagan sin alcanzar a nada.', 'event');
+  }
+
+  function descargarParalisis() {
+    let alcanzadas = 0;
+    for (const e of world.entities) {
+      if (!e.viva) continue;
+      if (Math.abs(e.x - world.player.x) + Math.abs(e.y - world.player.y) > 1) continue;
+      e.paralizada = 6;
+      e._hitT = performance.now();
+      alcanzadas++;
+      if (window.Effects) Effects.number(e.x, e.y, '⚡ paralizada', '#60c8e8');
+    }
+    world.log(alcanzadas
+      ? `El guante descarga: ${alcanzadas} entidad(es) inmovilizada(s) durante 6 turnos.`
+      : 'El guante chisporrotea… pero no hay nada adyacente que tocar. Se ha gastado.', alcanzadas ? 'good' : 'event');
+    if (window.Sfx) Sfx.play('registrar');
+  }
+
   function useItem(slot) {
     if (world.busy || world.over) return;
     const id = world.player.inv[slot];
@@ -892,44 +938,14 @@
     if (def.efecto?.toggle === 'luz') { toggleLuz(); return; }
     if (def.efecto?.activo === 'fuego') {
       world.player.inv.splice(slot, 1);
-      world.log('¡Lanzas el fuego griego! Las llamas se extienden a tu alrededor.', 'good');
-      if (window.Sfx) Sfx.play('golpe');
-      let alcanzadas = 0;
-      for (const e of world.entities) {
-        if (!e.viva) continue;
-        if (Math.abs(e.x - world.player.x) + Math.abs(e.y - world.player.y) > 3) continue;
-        e.vida -= 30;
-        e._hitT = performance.now();
-        e.huyendo = 8;
-        e.revelada = true;
-        alcanzadas++;
-        if (window.Effects) {
-          Effects.particles(e.x, e.y, '#ff8a30', 14);
-          Effects.number(e.x, e.y, '−30', '#ff8a30');
-        }
-        if (e.vida <= 0) { e.viva = false; world.log(`${e.def.nombre} arde hasta desaparecer.`, 'good'); }
-      }
-      if (window.Effects) Effects.flash(world.player.x, world.player.y, '#ff8a30');
-      if (!alcanzadas) world.log('Las llamas se apagan sin alcanzar a nada.', 'event');
+      lanzarFuego();
       world.ui.updateHUD();
       worldStep();
       return;
     }
     if (def.efecto?.activo === 'paralisis') {
       world.player.inv.splice(slot, 1);
-      let alcanzadas = 0;
-      for (const e of world.entities) {
-        if (!e.viva) continue;
-        if (Math.abs(e.x - world.player.x) + Math.abs(e.y - world.player.y) > 1) continue;
-        e.paralizada = 6;
-        e._hitT = performance.now();
-        alcanzadas++;
-        if (window.Effects) Effects.number(e.x, e.y, '⚡ paralizada', '#60c8e8');
-      }
-      world.log(alcanzadas
-        ? `El guante descarga: ${alcanzadas} entidad(es) inmovilizada(s) durante 6 turnos.`
-        : 'El guante chisporrotea… pero no hay nada adyacente que tocar. Se ha gastado.', alcanzadas ? 'good' : 'event');
-      if (window.Sfx) Sfx.play('registrar');
+      descargarParalisis();
       world.ui.updateHUD();
       worldStep();
       return;
@@ -947,6 +963,56 @@
       world.ui.updateHUD();
       worldStep();
     }
+  }
+
+  // golpe frontal con la tubería: ataca la casilla que ENCARAS (clic del ratón)
+  function atacarFrente() {
+    const [fx, fy] = ROT_VEC[world.player.rot ?? 2];
+    const tx = world.player.x + fx, ty = world.player.y + fy;
+    const ent = world.entities.find((e) => e.viva && e.x === tx && e.y === ty);
+    if (ent) {
+      golpear(ent);
+    } else {
+      world.log('Golpeas al aire. El ruido corre por los pasillos…', 'event');
+      if (window.Sfx) Sfx.play('golpe');
+    }
+    worldStep();
+  }
+
+  // usar lo que llevas en la mano con el ratón (v17): 0 = clic izq, 1 = clic der
+  function usarMano(m) {
+    if (world.busy || world.over || !world.player || !world.level) return;
+    const manos = world.player.manos || [null, null];
+    const id = manos[m];
+    if (id === '=') {
+      world.log('Ese objeto ocupa las dos manos: se usa con el clic IZQUIERDO.', 'event');
+      return;
+    }
+    if (!id) return;
+    const def = world.data.objects[id];
+    if (def.efecto?.toggle === 'luz') { toggleLuz(); return; }
+    if (def.efecto?.pasivo === 'arma') { atacarFrente(); return; }
+    if (def.efecto?.activo) {
+      // los objetos de un solo uso se gastan DESDE la mano
+      if (manos[1] === '=' || def.manos === 2) { manos[0] = null; manos[1] = null; }
+      else manos[m] = null;
+      if (def.efecto.activo === 'fuego') lanzarFuego();
+      else if (def.efecto.activo === 'paralisis') descargarParalisis();
+      world.ui.updateHUD();
+      worldStep();
+    }
+  }
+
+  // tirar un objeto de la mochila al suelo (acción libre, no consume turno)
+  function tirarItem(slot) {
+    const id = world.player.inv[slot];
+    if (!id || world.over) return;
+    world.player.inv.splice(slot, 1);
+    world.map.items.push({ x: world.player.x, y: world.player.y, id, recien: true });
+    world.itemsVersion = (world.itemsVersion || 0) + 1;
+    world.log(`Dejas ${world.data.objects[id].nombre} en el suelo.`, 'event');
+    if (window.Sfx) Sfx.play('ui');
+    world.ui.updateHUD();
   }
 
   // ---------- cruzar salidas ----------
@@ -1087,6 +1153,6 @@
   window.Game = {
     world, startRun, continueRun, loadSave, Profiles,
     tryMove, wait, interact, toggleLuz, useItem, crossExit,
-    girar, avanzar, equipar, desequipar,
+    girar, avanzar, equipar, desequipar, usarMano, tirarItem,
   };
 })();
