@@ -46,20 +46,32 @@
     sincroniza();
   }
 
-  function mueve(id, x, y) {
+  function mueve(id, x, y) { // teleports (spawn/noclip/corrección)
     const o = porId.get(id);
     if (!o) return;
-    // teletransporte largo (corrección/spawn): sin deslizamiento fantasma
     if (Math.abs(x - o.x) + Math.abs(y - o.y) > 3) { o.rx = x; o.ry = y; }
-    // orienta el sprite según el paso real
-    if (x > o.x) o.rot = 1; else if (x < o.x) o.rot = 3;
-    else if (y > o.y) o.rot = 2; else if (y < o.y) o.rot = 0;
+    o.x = x; o.y = y;
+  }
+
+  // v22: actualización continua de posición (batched); el facing se deriva
+  // del propio movimiento salvo que llegue un 'gira' explícito reciente
+  function pos(id, x, y) {
+    const o = porId.get(id);
+    if (!o) return;
+    const dx = x - o.x, dy = y - o.y;
+    if ((dx || dy) && performance.now() - (o.giroT || 0) > 400)
+      o.rot = Math.atan2(dx, -dy);
     o.x = x; o.y = y;
   }
 
   function gira(id, rot) {
     const o = porId.get(id);
-    if (o) o.rot = rot;
+    if (o) { o.rot = rot; o.giroT = performance.now(); }
+  }
+
+  // cuantiza un ángulo θ a las 4 direcciones de sprite (0 N, 1 E, 2 S, 3 O)
+  function dir4(th) {
+    return ((Math.round((th || 0) / (Math.PI / 2)) % 4) + 4) % 4;
   }
 
   // txt ya viene filtrado por el servidor
@@ -151,14 +163,14 @@
     }
   }
 
-  // sprite del jugador remoto RELATIVO a la cámara (0=N,1=E,2=S,3=O)
-  function spriteDe(o, camDir) {
-    const rel = ((o.rot - camDir) % 4 + 4) % 4;
+  // sprite del jugador remoto RELATIVO a la cámara (ángulos en radianes, v22)
+  function spriteDe(o, camTh) {
+    const rel = dir4((o.rot || 0) - (camTh || 0));
     if (rel === 0) return ['player_up', false];
     if (rel === 2) return ['player_down', false];
     return ['player_side', rel === 3];
   }
 
-  window.Otros = { reset, entra, sale, mueve, gira, chat, esconde, luz, overlay, spriteDe, frame,
+  window.Otros = { reset, entra, sale, mueve, pos, gira, chat, esconde, luz, overlay, spriteDe, dir4, frame,
     get lista() { return [...porId.values()]; } };
 })();

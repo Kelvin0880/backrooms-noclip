@@ -658,7 +658,10 @@ class Sala {
   difundir(msg, exceptoId) {
     const raw = JSON.stringify(msg);
     for (const j of this.jugadores.values())
-      if (j.id !== exceptoId && j.ws.readyState === 1) j.ws.send(raw);
+      if (j.id !== exceptoId && j.ws.readyState === 1) {
+        j.ws.send(raw);
+        metricas.bytes += raw.length;
+      }
   }
 }
 
@@ -681,7 +684,7 @@ function asignar(nivelId) {
 }
 
 // métricas del bucle de simulación (visibles en /estado)
-const metricas = { ultMs: 0, maxMs: 0, medias: [] };
+const metricas = { ultMs: 0, maxMs: 0, medias: [], bytes: 0, bytesT: Date.now(), kbs: 0 };
 
 function tickTodas(ahora) {
   const t0 = process.hrtime.bigint();
@@ -707,8 +710,17 @@ function estado() {
     total: [...salas.values()].reduce((n, s) => n + s.jugadores.size, 0),
     tick: { ultimoMs: +metricas.ultMs.toFixed(2), medioMs: +media.toFixed(2), maxMs: +metricas.maxMs.toFixed(2) },
     memoriaMB: Math.round(process.memoryUsage().rss / 1048576),
+    salidaKBs: metricas.kbs,
   };
 }
+
+// caudal de salida: se consolida cada 5 s
+setInterval(() => {
+  const dt = (Date.now() - metricas.bytesT) / 1000;
+  metricas.kbs = Math.round(metricas.bytes / dt / 1024);
+  metricas.bytes = 0;
+  metricas.bytesT = Date.now();
+}, 5000);
 
 // pool de instintos que tienen efecto en el mundo compartido (los de sed/
 // hambre/registro llegarán cuando esas mecánicas existan online)

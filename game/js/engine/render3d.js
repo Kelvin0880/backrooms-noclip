@@ -1353,7 +1353,10 @@
     // sprite del jugador orientado según su rotación relativa a la cámara
     if (world.otros && window.Otros) {
       const vivos = new Set();
-      const camDir = CAM_MODO === 'tercera' ? p.rot : ((4 - camRot) % 4);
+      // ángulo de cámara en radianes (v22): la orientación relativa decide el sprite
+      const camDir = CAM_MODO === 'tercera'
+        ? (world.online ? p.rot : p.rot * Math.PI / 2)
+        : ((4 - camRot) % 4) * Math.PI / 2;
       for (const o of world.otros) {
         vivos.add(o.id);
         if (o.escondido) { const sE = otrosSprites.get(o.id); if (sE) sE.visible = false; continue; }
@@ -1452,11 +1455,14 @@
     if (CAM_MODO === 'tercera') {
       // --- CÁMARA 3ª PERSONA: pegada a la espalda, baja, inmersiva ---
       const rot = p.rot ?? 2;
-      const [fx3, fz3] = ROT_VEC[rot];
       if (world.moving) camBobT += 0.13;
       const bob = Math.sin(camBobT) * TP.bob * (world.moving ? 1 : 0.12);
-      // el yaw viaja por el camino angular más corto hasta quedar tras el jugador
-      const yawObjetivo = Math.atan2(-fx3, -fz3);
+      // el yaw viaja por el camino angular más corto hasta quedar tras el jugador.
+      // v22 online: p.rot ya es un ángulo continuo θ (0=N); el facing es
+      // (sinθ,-cosθ) → yaw = atan2(-sinθ, cosθ) = -θ
+      let yawObjetivo;
+      if (world.online) yawObjetivo = -rot;
+      else { const [fx3, fz3] = ROT_VEC[rot]; yawObjetivo = Math.atan2(-fx3, -fz3); }
       let dyaw = yawObjetivo - camYaw;
       while (dyaw > Math.PI) dyaw -= Math.PI * 2;
       while (dyaw < -Math.PI) dyaw += Math.PI * 2;

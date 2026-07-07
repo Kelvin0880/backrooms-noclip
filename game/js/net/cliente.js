@@ -6,12 +6,13 @@
   let ws = null;
   let miId = null;
   let listo = false;
-  let ultPaso = 0;
   let reintento = null;
   let inputChat = null;
-
-  const COOLDOWN = 170;
-  const ROT_VEC = [[0, -1], [1, 0], [0, 1], [-1, 0]]; // N E S O
+  // v22 — movimiento libre: estado de input y reconciliación
+  const input = { dx: 0, dy: 0 };
+  let inputEnviado = { dx: 0, dy: 0 };
+  let rotEnviada = 0, rotUltEnvio = 0;
+  let tileFov = null; // último tile con FOV calculado
 
   function urlServidor() {
     const params = new URLSearchParams(location.search);
@@ -42,8 +43,8 @@
     const params = new URLSearchParams(location.search);
     ws = new WebSocket(urlServidor());
     ws.onopen = () => enviar({
-      t: 'hola', nombre, token: token(), v: 1,
-      nivel: params.get('nivel') || undefined, // puerta de desarrollo (M4 la cierra)
+      t: 'hola', nombre, token: token(), v: 2,
+      nivel: params.get('nivel') || undefined, // puerta de desarrollo (solo MMO_DEV=1)
     });
     ws.onmessage = (ev) => {
       let m;
@@ -100,14 +101,24 @@
       }
       case 'entra': if (listo) Otros.entra(m); break;
       case 'sale': if (listo) Otros.sale(m.id); break;
-      case 'mueve':
+      case 'mueve': // teleports: spawn, respawn, noclip, corrección dura
         if (!listo) return;
         if (m.id === miId) {
-          if (m.x !== w.player.x || m.y !== w.player.y) {
-            w.player.x = m.x; w.player.y = m.y;
-            fov(w);
-          }
+          w.player.x = m.x; w.player.y = m.y;
+          w.player.rx = m.x; w.player.ry = m.y;
+          fov(w);
         } else Otros.mueve(m.id, m.x, m.y);
+        break;
+      case 'pos': // v22: lote de posiciones del tick (jugadores y entidades)
+        if (!listo) return;
+        for (const [id, x, y] of m.j || []) {
+          if (id === miId) reconciliar(w, x, y);
+          else Otros.pos(id, x, y);
+        }
+        for (const [uid, x, y] of m.e || []) {
+          const e = entidadDe(uid);
+          if (e) { e.x = x; e.y = y; }
+        }
         break;
       case 'gira': if (listo) Otros.gira(m.id, m.rot); break;
       case 'chat':
@@ -354,39 +365,49 @@
     for (let i = 0; i < w.light.length; i++) if (w.light[i] > 0) w.explored[i] = 1;
   }
 
-  // ---------- movimiento con predicción local ----------
-  function mover(dx, dy) {
+  // ---------- movimiento libre (v22): input vectorial + predicción local ----------
+  function setInput(dx, dy) {
+    input.dx = Math.max(-1, Math.min(1, dx || 0));
+    input.dy = Math.max(-1, Math.min(1, dy || 0));
+    // se envía solo al CAMBIAR (el servidor mantiene el último estado)
+    if (Math.abs(input.dx - inputEnviado.dx) > 0.01 || Math.abs(input.dy - inputEnviado.dy) > 0.01) {
+      inputEnviado = { dx: input.dx, dy: input.dy };
+      enviar({ t: 'input', dx: input.dx, dy: input.dy });
+    }
+  }
+
+  function setRot(th) {
     const w = Game.world;
-    if (!listo) return;
+    w.player.rot = th;
     const ahora = performance.now();
-    if (ahora - ultPaso < COOLDOWN) return;
-    ultPaso = ahora;
-    const nx = w.player.x + dx, ny = w.player.y + dy;
-    if (!w.escondido && MapGen.walkable(MapGen.at(w.map.grid, nx, ny))) {
-      w.player.x = nx; w.player.y = ny; // predicción: el servidor confirma o corrige
+    if (Math.abs(th - rotEnviada) > 0.03 && ahora - rotUltEnvio > 80) {
+      rotEnviada = th; rotUltEnvio = ahora;
+      enviar({ t: 'rot', th: Math.round(th * 100) / 100 });
+    }
+  }
+
+  // predicción: el cliente integra su propio movimiento con LA MISMA física
+  // que el servidor — la reconciliación casi nunca tiene que corregir
+  function frame(dt) {
+    const w = Game.world;
+    if (!listo || w.escondido || (!input.dx && !input.dy)) return;
+    const [nx, ny] = Fisica.mover(w.map.grid, w.player.x, w.player.y, input.dx, input.dy, dt, Fisica.VEL_JUGADOR);
+    w.player.x = nx; w.player.y = ny;
+    const tx = Fisica.tileDe(nx), ty = Fisica.tileDe(ny);
+    if (!tileFov || tileFov[0] !== tx || tileFov[1] !== ty) {
+      tileFov = [tx, ty];
       fov(w);
     }
-    enviar({ t: 'mover', dx, dy });
   }
 
-  function avanzar(s) {
-    const w = Game.world;
-    const [dx, dy] = ROT_VEC[w.player.rot];
-    mover(dx * s, dy * s);
-  }
-
-  function girar(d) {
-    const w = Game.world;
-    w.player.rot = ((w.player.rot + d) % 4 + 4) % 4;
-    enviar({ t: 'rot', rot: w.player.rot });
-  }
-
-  function moverPantalla(dx, dy) {
-    const w = Game.world;
-    if (dy > 0) w.player.dir = 'down';
-    else if (dy < 0) w.player.dir = 'up';
-    else if (dx !== 0) { w.player.dir = 'side'; w.player.flip = dx < 0; }
-    mover(dx, dy);
+  // posición autoritativa propia: desviación grande = snap; pequeña = mezcla
+  function reconciliar(w, sx, sy) {
+    const d = Fisica.dist(w.player.x, w.player.y, sx, sy);
+    if (d > 0.5) { w.player.x = sx; w.player.y = sy; fov(w); }
+    else if (d > 0.03) {
+      w.player.x += (sx - w.player.x) * 0.15;
+      w.player.y += (sy - w.player.y) * 0.15;
+    }
   }
 
   // ---------- acciones ----------
@@ -442,7 +463,7 @@
   }
 
   window.Net = {
-    iniciar, mover, avanzar, girar, moverPantalla,
+    iniciar, setInput, setRot, frame,
     accion, usar, luzToggle, mochila, noclip,
     abrirChat, chatAbierto,
     get activo() { return listo; },

@@ -713,13 +713,14 @@
         if (o.escondido) continue;
         const ox = o.rx * TILE - cam.x, oy = o.ry * TILE - cam.y;
         if (ox < -TILE || oy < -TILE || ox > W + TILE || oy > H + TILE) continue;
-        const dir = o.rot === 0 ? 'up' : o.rot === 2 ? 'down' : 'side';
+        const d4 = Otros.dir4(o.rot);
+        const dir = d4 === 0 ? 'up' : d4 === 2 ? 'down' : 'side';
         const sid = 'player_' + dir;
         const anda = Math.abs(o.rx - o.x) + Math.abs(o.ry - o.y) > 0.03;
         const img = Sprites.get(sid, anda ? Math.floor(t / 150) % Sprites.frameCount(sid) : 0);
         ctx.save();
         ctx.translate(ox + 24, oy + 20);
-        if (o.rot === 3) ctx.scale(-1, 1);
+        if (d4 === 3) ctx.scale(-1, 1);
         ctx.drawImage(img, -24, -24);
         ctx.restore();
       }

@@ -20,17 +20,24 @@ function bot(i) {
   const ws = new WebSocket(URL);
   ws.on('open', () => {
     conectados++;
-    ws.send(JSON.stringify({ t: 'hola', nombre: `Bot-${i}`, token: `bot-${i}`, v: 1, nivel: NIVEL }));
-    const paso = setInterval(() => {
-      if (ws.readyState !== 1) { clearInterval(paso); return; }
-      const dir = [[0, -1], [0, 1], [-1, 0], [1, 0]][Math.floor(Math.random() * 4)];
-      ws.send(JSON.stringify({ t: 'mover', dx: dir[0], dy: dir[1] }));
+    ws.send(JSON.stringify({ t: 'hola', nombre: `Bot-${i}`, token: `bot-${i}`, v: 2, nivel: NIVEL }));
+    // v22: los bots cambian de RUMBO (vector continuo) en vez de dar pasos
+    const rumbo = setInterval(() => {
+      if (ws.readyState !== 1) { clearInterval(rumbo); return; }
+      const quieto = Math.random() < 0.15;
+      const ang = Math.random() * Math.PI * 2;
+      ws.send(JSON.stringify({
+        t: 'input',
+        dx: quieto ? 0 : Math.sin(ang),
+        dy: quieto ? 0 : -Math.cos(ang),
+      }));
+      if (!quieto) ws.send(JSON.stringify({ t: 'rot', th: ang }));
       movidos++;
-      if (Math.random() < 0.02) {
+      if (Math.random() < 0.08) {
         ws.send(JSON.stringify({ t: 'chat', txt: FRASES[Math.floor(Math.random() * FRASES.length)] }));
         chats++;
       }
-    }, 170 + Math.random() * 160);
+    }, 600 + Math.random() * 900);
   });
   ws.on('message', (raw) => {
     let m;
