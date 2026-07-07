@@ -365,3 +365,9 @@ details.cdx > div, details.cdx > ol { padding: 6px 14px 12px; }
 #end-stats b { color: var(--amarillo); display: block; font-family: var(--font-title); font-size: 14px; padding-bottom: 4px; }
 .end-box h3 { color: var(--gris); font-size: 16px; margin-bottom: 8px; letter-spacing: 1px; }
 #end-journal { padding-left: 22px; font-size: 16px; line-height: 1.7; color: #cfc8b0; margin-bottom: 26px; }
+
+/* ---------- scrollbars retro ---------- */
+::-webkit-scrollbar { width: 10px; background: #0a0906; border-left: 1px solid var(--borde); }
+::-webkit-scrollbar-thumb { background: var(--amarillo-osc); border: 1px solid #0a0906; }
+::-webkit-scrollbar-thumb:hover { background: var(--amarillo); }
+* { scrollbar-width: thin; scrollbar-color: var(--amarillo-osc) #0a0906; }

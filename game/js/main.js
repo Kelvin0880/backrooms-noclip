@@ -70,8 +70,14 @@
     chat: 12
   },
   cursorSpeed: 8, dado: true };
-  try { Object.assign(window.OPTS, JSON.parse(localStorage.getItem('backrooms-opts')) || {}); }
-  catch (e) { /* opciones corruptas: valores por defecto */ }
+  try { 
+    const storedOpts = JSON.parse(localStorage.getItem('backrooms-opts')) || {};
+    if (storedOpts.gamepadMap) {
+      Object.assign(window.OPTS.gamepadMap, storedOpts.gamepadMap);
+      delete storedOpts.gamepadMap;
+    }
+    Object.assign(window.OPTS, storedOpts);
+  } catch (e) { /* opciones corruptas: valores por defecto */ }
   const optDado = document.getElementById('opt-dado');
   optDado.checked = OPTS.dado;
   optDado.onchange = () => {
