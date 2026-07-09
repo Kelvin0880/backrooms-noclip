@@ -36,6 +36,7 @@
         <input id="seed-input" type="hidden">
         <label><span data-icon="altavoz" data-icon-size="13"></span> <input type="range" id="vol-slider-title" min="0" max="100" step="1" style="vertical-align:middle;width:110px"></label>
         <button id="btn-sound-menu-title" class="btn-small" style="margin-left:8px;margin-top:0"><span data-icon="engranaje" data-icon-size="13"></span> Sonido</button>
+        <button id="btn-gamepad-title" class="btn-small" style="margin-left:8px;margin-top:0">Mando</button>
       </div>
       <div class="room-row">
         <label>Sala privada opcional:
@@ -195,9 +196,26 @@
       </div>
       <div class="modal-btns">
         <button id="btn-snd-mute" class="btn-small"></button>
+        <button id="btn-gamepad-settings" class="btn-small">Configurar Mando</button>
         <button id="btn-snd-close" class="btn-small">Cerrar</button>
       </div>
       <p id="ajustes-version"></p>
+    </div>
+  </div>
+
+  <!-- Ajustes de Mando -->
+  <div id="gamepad-menu" style="display:none; position:absolute; inset:0; align-items:center; justify-content:center; background:rgba(0,0,0,0.8); z-index:90;">
+    <div class="modal-box" style="width: 420px; max-width: 90%;">
+      <h3>Configuración de Mando</h3>
+      <div class="sound-row"><label>Vel. del Cursor</label><input type="range" id="opt-cursor-speed" min="2" max="25"><span id="opt-cursor-speed-v"></span></div>
+      <div id="gamepad-mapping-list" style="margin: 15px 0; max-height: 250px; overflow-y: auto; text-align: left; font-size: 14px; border-top: 1px solid #3a352a; padding-top: 10px;">
+        <!-- Llenado dinámicamente -->
+      </div>
+      <p id="gamepad-wait-msg" style="color:var(--amarillo); display:none; margin-bottom:10px;">Pulsa un botón en el mando...</p>
+      <div class="modal-btns">
+        <button id="btn-gamepad-default" class="btn-small">Por defecto</button>
+        <button id="btn-gamepad-close" class="btn-small">Volver</button>
+      </div>
     </div>
   </div>
 

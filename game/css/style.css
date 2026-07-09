@@ -2,6 +2,8 @@
 @font-face { font-family: 'Press Start 2P'; src: url('../assets/fonts/PressStart2P-Regular.ttf') format('truetype'); font-display: swap; }
 @font-face { font-family: 'VT323'; src: url('../assets/fonts/VT323-Regular.ttf') format('truetype'); font-display: swap; }
 * { box-sizing: border-box; margin: 0; padding: 0; }
+#virtual-cursor { position: fixed; width: 14px; height: 14px; background: rgba(217,198,110,0.8); border: 2px solid #fff; border-radius: 50%; pointer-events: none; z-index: 999999; display: none; transform: translate(-50%, -50%); box-shadow: 0 0 8px #000; transition: transform 0.05s linear; }
+#virtual-cursor.vc-active { transform: translate(-50%, -50%) scale(0.8); background: #fff; border-color: var(--amarillo); }
 :root {
   --amarillo: #d9c66e;
   --amarillo-osc: #8a7a3d;
@@ -93,11 +95,13 @@ html, body { height: 100%; background: #060504; color: var(--hueso);
   box-shadow: 0 0 80px rgba(0,0,0,1); image-rendering: pixelated; }
 #gl-canvas { position: absolute; top: 0; left: 0; border: 1px solid #22201a; }
 #game-wrap.modo3d #game-canvas { position: relative; background: transparent; box-shadow: none; }
-#vol-slider-title { -webkit-appearance: none; appearance: none; width: 90px; height: 4px;
+input[type="range"] { -webkit-appearance: none; appearance: none; width: 90px; height: 4px;
   background: #3a352a; outline: none; cursor: pointer; vertical-align: middle; }
-#vol-slider-title::-webkit-slider-thumb {
+input[type="range"]::-webkit-slider-thumb {
   -webkit-appearance: none; appearance: none; width: 12px; height: 12px;
   background: var(--amarillo); border: 1px solid #0a0906; cursor: pointer; }
+input[type="range"]::-moz-range-thumb {
+  width: 12px; height: 12px; border: 1px solid #0a0906; background: var(--amarillo); cursor: pointer; border-radius: 0; }
 /* v16: botón-pergamino del registro completo + moodles de estado (arriba) */
 #btn-log { position: absolute; top: 10px; left: 10px; width: 28px; height: 28px;
   background: rgba(10,9,6,.72); border: 1px solid var(--borde); cursor: pointer;
@@ -391,3 +395,9 @@ details.cdx > div, details.cdx > ol { padding: 6px 14px 12px; }
 #end-stats b { color: var(--amarillo); display: block; font-family: var(--font-title); font-size: 14px; padding-bottom: 4px; }
 .end-box h3 { color: var(--gris); font-size: 16px; margin-bottom: 8px; letter-spacing: 1px; }
 #end-journal { padding-left: 22px; font-size: 16px; line-height: 1.7; color: #cfc8b0; margin-bottom: 26px; }
+
+/* ---------- scrollbars retro ---------- */
+::-webkit-scrollbar { width: 10px; background: #0a0906; border-left: 1px solid var(--borde); }
+::-webkit-scrollbar-thumb { background: var(--amarillo-osc); border: 1px solid #0a0906; }
+::-webkit-scrollbar-thumb:hover { background: var(--amarillo); }
+* { scrollbar-width: thin; scrollbar-color: var(--amarillo-osc) #0a0906; }

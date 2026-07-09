@@ -55,9 +55,31 @@
   }
 
   // ---------- opciones persistentes (v16) ----------
-  window.OPTS = { dado: true };
-  try { Object.assign(window.OPTS, JSON.parse(localStorage.getItem('backrooms-opts')) || {}); }
-  catch (e) { /* opciones corruptas: valores por defecto */ }
+  window.OPTS = {
+  gamepadMap: {
+    interact: 0,
+    wait: 2,
+    light: 3,
+    handL: 4,
+    handR: 5,
+    backpack: 1,
+    menu: 9,
+    map: 6,
+    log: 7,
+    codex: 8,
+    noclip: 10,
+    journal: 11,
+    chat: 12
+  },
+  cursorSpeed: 8, dado: true };
+  try { 
+    const storedOpts = JSON.parse(localStorage.getItem('backrooms-opts')) || {};
+    if (storedOpts.gamepadMap) {
+      Object.assign(window.OPTS.gamepadMap, storedOpts.gamepadMap);
+      delete storedOpts.gamepadMap;
+    }
+    Object.assign(window.OPTS, storedOpts);
+  } catch (e) { /* opciones corruptas: valores por defecto */ }
   const optDado = document.getElementById('opt-dado');
   optDado.checked = OPTS.dado;
   optDado.onchange = () => {
@@ -237,6 +259,124 @@
   }
   const btnBpClose = document.getElementById('btn-backpack-close');
   if (btnBpClose) btnBpClose.onclick = () => world.ui.toggleBackpack(false);
+  
+  // ---------- ajustes de mando ----------
+  const btnGamepadSettings = document.getElementById('btn-gamepad-settings');
+  const gamepadMenu = document.getElementById('gamepad-menu');
+  const gamepadList = document.getElementById('gamepad-mapping-list');
+  const gamepadWaitMsg = document.getElementById('gamepad-wait-msg');
+  const optCursorSpeed = document.getElementById('opt-cursor-speed');
+  const optCursorSpeedV = document.getElementById('opt-cursor-speed-v');
+  let isWaitingForButton = false;
+  let currentActionToMap = null;
+
+  let openedFromSndMenu = false;
+  if (btnGamepadSettings) {
+    btnGamepadSettings.onclick = () => {
+      openedFromSndMenu = true;
+      sndMenu.style.display = 'none';
+      gamepadMenu.style.display = 'flex';
+      optCursorSpeed.value = OPTS.cursorSpeed;
+      optCursorSpeedV.textContent = OPTS.cursorSpeed;
+      renderGamepadList();
+    };
+  }
+
+  const btnGamepadTitle = document.getElementById('btn-gamepad-title');
+  if (btnGamepadTitle) {
+    btnGamepadTitle.onclick = () => {
+      openedFromSndMenu = false;
+      gamepadMenu.style.display = 'flex';
+      optCursorSpeed.value = OPTS.cursorSpeed;
+      optCursorSpeedV.textContent = OPTS.cursorSpeed;
+      renderGamepadList();
+    };
+  }
+  
+  if (optCursorSpeed) {
+    optCursorSpeed.oninput = () => {
+      OPTS.cursorSpeed = parseInt(optCursorSpeed.value, 10);
+      optCursorSpeedV.textContent = OPTS.cursorSpeed;
+      guardarOpciones();
+    };
+  }
+  
+  const btnGamepadClose = document.getElementById('btn-gamepad-close');
+  if (btnGamepadClose) {
+    btnGamepadClose.onclick = () => {
+      gamepadMenu.style.display = 'none';
+      if (openedFromSndMenu) abrirSndMenu();
+    };
+  }
+
+  const btnGamepadDefault = document.getElementById('btn-gamepad-default');
+  if (btnGamepadDefault) {
+    btnGamepadDefault.onclick = () => {
+      OPTS.gamepadMap = { interact: 0, wait: 2, light: 3, handL: 4, handR: 5, backpack: 1, menu: 9, map: 6, log: 7, codex: 8, noclip: 10, journal: 11, chat: 12 };
+      OPTS.cursorSpeed = 8;
+      optCursorSpeed.value = 8;
+      optCursorSpeedV.textContent = 8;
+      guardarOpciones();
+      renderGamepadList();
+    };
+  }
+
+  function renderGamepadList() {
+    if (!gamepadList) return;
+    gamepadList.innerHTML = '';
+    const actions = [
+      { id: 'interact', label: 'Interactuar / Aceptar / Cursor' },
+      { id: 'wait', label: 'Esperar un turno' },
+      { id: 'light', label: 'Encender/Apagar linterna' },
+      { id: 'handL', label: 'Usar mano izquierda (Q)' },
+      { id: 'handR', label: 'Usar mano derecha (E)' },
+      { id: 'backpack', label: 'Mochila' },
+      { id: 'map', label: 'Mapa (M/N)' },
+      { id: 'log', label: 'Registro (L)' },
+      { id: 'journal', label: 'Diario (J)' },
+      { id: 'codex', label: 'Códice (C)' },
+      { id: 'noclip', label: 'No-Clip (G)' },
+      { id: 'chat', label: 'Chat MMO (T)' },
+      { id: 'menu', label: 'Menú / Cerrar' }
+    ];
+    for (const action of actions) {
+      const row = document.createElement('div');
+      row.style.display = 'flex';
+      row.style.justifyContent = 'space-between';
+      row.style.alignItems = 'center';
+      row.style.marginBottom = '6px';
+      
+      const lbl = document.createElement('span');
+      lbl.textContent = action.label;
+      
+      const btn = document.createElement('button');
+      btn.className = 'btn-small';
+      btn.style.marginTop = '0';
+      btn.textContent = 'Botón ' + OPTS.gamepadMap[action.id];
+      
+      btn.onclick = () => {
+        if (isWaitingForButton) return;
+        isWaitingForButton = true;
+        currentActionToMap = action.id;
+        gamepadWaitMsg.style.display = 'block';
+        btn.textContent = '...';
+        btn.style.color = 'var(--amarillo)';
+      };
+      
+      row.appendChild(lbl);
+      row.appendChild(btn);
+      gamepadList.appendChild(row);
+    }
+  }
+
+  function isUIOpen() {
+    if (document.getElementById('backpack-panel')?.style.display !== 'none') return true;
+    if (document.getElementById('codex-panel')?.style.display !== 'none') return true;
+    if (document.getElementById('journal-panel')?.style.display !== 'none') return true;
+    if (document.getElementById('sound-menu')?.style.display !== 'none') return true;
+    if (document.getElementById('gamepad-menu')?.style.display !== 'none') return true;
+    return false;
+  }
   const btnSndTitle = document.getElementById('btn-sound-menu-title');
   if (btnSndTitle) btnSndTitle.onclick = abrirSndMenu;
 
@@ -356,7 +496,242 @@
   // servidor DEBEN integrar el rumbo con la misma constante)
   let lastFrameT = 0;
 
+  
+  let vCursor = null;
+  let cursorX = window.innerWidth / 2;
+  let cursorY = window.innerHeight / 2;
+  let aButtonDown = false;
+  let dragTarget = null;
+  
+  let usingGamepad = false;
+  let wasUIOpen = false;
+  const hideGamepadCursor = () => { 
+    usingGamepad = false; 
+    if (vCursor) vCursor.style.display = 'none'; 
+    const st = document.getElementById('no-cursor-style');
+    if (st) st.remove();
+  };
+  document.addEventListener('mousemove', hideGamepadCursor);
+  document.addEventListener('mousedown', hideGamepadCursor);
+  document.addEventListener('wheel', hideGamepadCursor);
+
+  window.gamepadDx = 0;
+  window.gamepadDy = 0;
+  let lastGamepadStepT = 0;
+  const lastGamepadState = {};
+
+  function pollGamepad(t) {
+    window.gamepadDx = 0;
+    window.gamepadDy = 0;
+
+    if (!navigator.getGamepads) return;
+    const gamepads = navigator.getGamepads();
+    const gp = gamepads[0] || gamepads[1] || gamepads[2] || gamepads[3];
+    if (!gp) return;
+
+    const btns = gp.buttons;
+    const pressed = (i) => btns[i] && btns[i].pressed;
+    const justPressed = (i) => pressed(i) && !lastGamepadState[i];
+
+    const uiOpen = isUIOpen();
+
+    if (isWaitingForButton) {
+      for (let i = 0; i < btns.length; i++) {
+        if (justPressed(i)) {
+          OPTS.gamepadMap[currentActionToMap] = i;
+          isWaitingForButton = false;
+          if (gamepadWaitMsg) gamepadWaitMsg.style.display = 'none';
+          guardarOpciones();
+          renderGamepadList();
+          break;
+        }
+      }
+      for (let i = 0; i < btns.length; i++) lastGamepadState[i] = pressed(i);
+      return;
+    }
+
+    let dx = 0, dy = 0;
+    if (pressed(14) || gp.axes[0] < -0.4) dx = -1;
+    if (pressed(15) || gp.axes[0] > 0.4) dx = 1;
+    if (pressed(12) || gp.axes[1] < -0.4) dy = -1;
+    if (pressed(13) || gp.axes[1] > 0.4) dy = 1;
+
+    if (uiOpen) {
+      if (Math.abs(gp.axes[0]) > 0.1) dx = gp.axes[0];
+      if (Math.abs(gp.axes[1]) > 0.1) dy = gp.axes[1];
+    } else {
+      // In game mode, use analog precision for movement vector (if supported)
+      if (Math.abs(gp.axes[0]) > 0.1) dx = gp.axes[0];
+      if (Math.abs(gp.axes[1]) > 0.1) dy = gp.axes[1];
+      window.gamepadDx = dx;
+      window.gamepadDy = dy;
+    }
+
+    let anyInput = false;
+    for(let i=0; i<btns.length; i++) if (pressed(i)) anyInput = true;
+    if (anyInput || Math.abs(gp.axes[0]) > 0.1 || Math.abs(gp.axes[1]) > 0.1) {
+      if (!usingGamepad) {
+        let st = document.getElementById('no-cursor-style');
+        if (!st) {
+          st = document.createElement('style');
+          st.id = 'no-cursor-style';
+          st.textContent = '* { cursor: none !important; }';
+          document.head.appendChild(st);
+        }
+      }
+      usingGamepad = true;
+    }
+
+    if (uiOpen && !wasUIOpen) {
+      cursorX = window.innerWidth / 2;
+      cursorY = window.innerHeight / 2;
+    }
+    wasUIOpen = uiOpen;
+
+    if (uiOpen) {
+      if (!vCursor) {
+        vCursor = document.getElementById('virtual-cursor');
+        if (!vCursor) {
+          vCursor = document.createElement('div');
+          vCursor.id = 'virtual-cursor';
+          document.body.appendChild(vCursor);
+        }
+      }
+      
+      if (usingGamepad) {
+        if (vCursor.style.display !== 'block') {
+          vCursor.style.display = 'block';
+        }
+      } else {
+        if (vCursor.style.display === 'block') vCursor.style.display = 'none';
+      }
+      
+      if (dx !== 0 || dy !== 0) {
+        cursorX += dx * OPTS.cursorSpeed;
+        cursorY += dy * OPTS.cursorSpeed;
+        cursorX = Math.max(0, Math.min(window.innerWidth, cursorX));
+        cursorY = Math.max(0, Math.min(window.innerHeight, cursorY));
+        vCursor.style.left = cursorX + 'px';
+        vCursor.style.top = cursorY + 'px';
+      }
+
+      const target = document.elementFromPoint(cursorX, cursorY);
+      const aBtnIdx = OPTS.gamepadMap.interact;
+      const bBtnIdx = OPTS.gamepadMap.menu;
+      const bpBtnIdx = OPTS.gamepadMap.backpack;
+      
+      if (justPressed(aBtnIdx)) {
+        aButtonDown = true;
+        vCursor.classList.add('vc-active');
+        if (target) {
+          target.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true, clientX: cursorX, clientY: cursorY }));
+          dragTarget = target;
+        }
+      } else if (pressed(aBtnIdx) && (dx !== 0 || dy !== 0) && aButtonDown) {
+        if (target) {
+          target.dispatchEvent(new MouseEvent('mousemove', { bubbles: true, cancelable: true, clientX: cursorX, clientY: cursorY }));
+        }
+      } else if (!pressed(aBtnIdx) && aButtonDown) {
+        aButtonDown = false;
+        vCursor.classList.remove('vc-active');
+        if (target) {
+          target.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, cancelable: true, clientX: cursorX, clientY: cursorY }));
+          if (dragTarget === target) {
+            target.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, clientX: cursorX, clientY: cursorY }));
+          }
+        }
+        dragTarget = null;
+      }
+
+      if (justPressed(bBtnIdx) || justPressed(bpBtnIdx)) {
+        document.dispatchEvent(new KeyboardEvent('keydown', { code: 'Escape' }));
+      }
+    } else {
+      if (vCursor && vCursor.style.display === 'block') {
+        vCursor.style.display = 'none';
+        if (aButtonDown) {
+           aButtonDown = false;
+           vCursor.classList.remove('vc-active');
+           if (dragTarget) dragTarget.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, cancelable: true, clientX: cursorX, clientY: cursorY }));
+           dragTarget = null;
+        }
+      }
+
+      if (!world.level || world.over || world.busy) {
+        for(let i=0; i<btns.length; i++) lastGamepadState[i] = pressed(i);
+        return;
+      }
+
+      const third = use3D && window.Render3D && Render3D.modo === 'tercera';
+
+      if (!world.online) {
+        // Offline step movement
+        if (dx !== 0 || dy !== 0) {
+          if (t - lastGamepadStepT >= 150) {
+            lastGamepadStepT = t;
+            if (third) {
+              if (dy < -0.5) Game.avanzar(1);
+              else if (dy > 0.5) Game.avanzar(-1);
+              else Game.girar(dx > 0 ? 1 : (dx < 0 ? -1 : 0));
+            } else {
+              let ndx = dx > 0.5 ? 1 : (dx < -0.5 ? -1 : 0);
+              let ndy = dy > 0.5 ? 1 : (dy < -0.5 ? -1 : 0);
+              if (use3D && window.Render3D && Render3D.rot) {
+                const th = -Render3D.rot * Math.PI / 2;
+                const rx = Math.round(Math.cos(th) * ndx - Math.sin(th) * ndy);
+                const ry = Math.round(Math.sin(th) * ndx + Math.cos(th) * ndy);
+                ndx = rx; ndy = ry;
+              }
+              Game.tryMove(ndx, ndy);
+            }
+          }
+        }
+      }
+
+      // Actions
+      if (justPressed(OPTS.gamepadMap.interact)) {
+        if (world.online && window.Net) Net.accion();
+        else Game.interact();
+      }
+      if (justPressed(OPTS.gamepadMap.wait)) {
+        if (!world.online) Game.wait();
+      }
+      if (justPressed(OPTS.gamepadMap.light)) {
+        if (world.online && window.Net) Net.luzToggle();
+        else Game.toggleLuz();
+      }
+      if (justPressed(OPTS.gamepadMap.handL)) {
+        if (third || !use3D) {
+          if (world.online && window.Net) Net.usar(0);
+          else Game.usarMano(0);
+        } else {
+          Render3D.rotar(1);
+        }
+      }
+      if (justPressed(OPTS.gamepadMap.handR)) {
+        if (third || !use3D) {
+          if (world.online && window.Net) Net.usar(1);
+          else Game.usarMano(1);
+        } else {
+          Render3D.rotar(-1);
+        }
+      }
+      if (justPressed(OPTS.gamepadMap.backpack)) world.ui.toggleBackpack();
+      if (justPressed(OPTS.gamepadMap.map)) Minimap.toggleBig();
+      if (justPressed(OPTS.gamepadMap.log)) world.ui.toggleLog();
+      if (justPressed(OPTS.gamepadMap.journal)) world.ui.toggleJournal();
+      if (justPressed(OPTS.gamepadMap.codex)) world.ui.toggleCodex();
+      if (justPressed(OPTS.gamepadMap.noclip)) Game.noclip();
+      if (justPressed(OPTS.gamepadMap.chat)) {
+        if (world.online && window.Net) Net.abrirChat();
+      }
+      if (justPressed(OPTS.gamepadMap.menu)) document.dispatchEvent(new KeyboardEvent('keydown', { code: 'Escape' }));
+    }
+
+    for(let i=0; i<btns.length; i++) lastGamepadState[i] = pressed(i);
+  }
   function loop(t) {
+    pollGamepad(t);
     requestAnimationFrame(loop);
     const dtBruto = (t - lastFrameT) / 1000 || 0;
     const dtF = Math.min(0.1, dtBruto);
@@ -373,7 +748,7 @@
         !(Net.chatAbierto && Net.chatAbierto()) &&
         document.getElementById('screen-card').style.display === 'none') {
       // suma de las teclas pulsadas en coordenadas de PANTALLA
-      let sx = 0, sy = 0;
+      let sx = window.gamepadDx || 0, sy = window.gamepadDy || 0;
       for (const code of teclas) {
         const v = KEYS[code];
         if (v) { sx += v[0]; sy += v[1]; }
