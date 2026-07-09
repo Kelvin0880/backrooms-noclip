@@ -12,10 +12,11 @@
   // una entrada por nivel (clave world.level.id) para no mezclarlas al
   // cambiar de nivel; se conservan si vuelves a ese nivel más tarde.
   // NOTA: en un nivel `infinito` (Level 0) la rejilla es una ventana
-  // deslizante — si el jugador se aleja lo bastante para que la ventana
-  // se desplace, las marcas quedan ancladas a la casilla de rejilla, no
-  // a la posición absoluta del mundo, y pueden "desencajarse" del sitio
-  // que señalaban.
+  // deslizante — game.js llama a Minimap.desplazarMarcas() en cada
+  // desplazarVentana() con el mismo shiftX/shiftY que aplica a jugador,
+  // entidades e items, para que las marcas sigan ancladas al sitio del
+  // mundo que señalaban (y se descarten si ese sitio queda fuera de la
+  // nueva ventana).
   const marcasPorNivel = new Map();
   function marcasDe(levelId) {
     let arr = marcasPorNivel.get(levelId);
@@ -140,6 +141,21 @@
     });
   }
 
+  // llamado desde desplazarVentana() (game.js) con el mismo shift que se
+  // aplica a jugador/entidades/items: las marcas se mueven con el mundo y
+  // las que quedan fuera de la nueva ventana se descartan (ya no señalan
+  // nada visible).
+  function desplazarMarcas(levelId, shiftX, shiftY, w, h) {
+    const arr = marcasPorNivel.get(levelId);
+    if (!arr || !arr.length) return;
+    const dentro = [];
+    for (const m of arr) {
+      m.x -= shiftX; m.y -= shiftY;
+      if (m.x >= 0 && m.y >= 0 && m.x < w && m.y < h) dentro.push(m);
+    }
+    marcasPorNivel.set(levelId, dentro);
+  }
+
   window.Minimap = {
     frame(world, t) {
       if (!world.level || !world.map) return;
@@ -149,6 +165,7 @@
       if (bigVisible) render(big, world, t);
     },
     toggleBig,
+    desplazarMarcas,
     get visible() { return bigVisible; },
   };
 })();
